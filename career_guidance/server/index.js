@@ -14,16 +14,15 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: [
-    'https://inquisitive-lolly-f339e0.netlify.app',
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'http://localhost:5174'
-  ],
+  origin: '*', // Allow all origins temporarily to test
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Add OPTIONS handling for preflight requests
+app.options('*', cors());
+
 app.use(bodyParser.json());
 
 
