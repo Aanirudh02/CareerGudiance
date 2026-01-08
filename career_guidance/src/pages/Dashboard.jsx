@@ -378,7 +378,7 @@ useEffect(() => {
         console.log('Checking profile for:', currentUser.email); // DEBUG
         
         const response = await fetch(
-          `http://localhost:5000/api/get-profile/${currentUser.email}`
+          `https://careergudiance-3.onrender.com/api/get-profile/${currentUser.email}`
         );
         const data = await response.json();
         
@@ -475,12 +475,12 @@ useEffect(() => {
   };
 
 
-  const handleSubmit = async () => {
+ const handleSubmit = async () => {
   setIsSubmitting(true);
 
   try {
     // Step 1: Save profile to Cloudinary
-    const saveResponse = await fetch('http://localhost:5000/api/save-profile', {
+    const saveResponse = await fetch('https://careergudiance-3.onrender.com/api/save-profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -494,31 +494,6 @@ useEffect(() => {
     if (saveData.success) {
       setProfileExists(true);
       setShowDialog(false);
-      
-      // Step 2: Get AI career guidance
-      setGuidanceLoading(true);
-      setShowGuidance(true);
-      
-      try {
-        const guidanceResponse = await fetch('http://localhost:5000/api/get-career-guidance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ profileData: formData })
-        });
-
-        const guidanceData = await guidanceResponse.json();
-        
-        if (guidanceData.success) {
-          setCareerGuidance(guidanceData.guidance);
-        } else {
-          setCareerGuidance('❌ Failed to generate career guidance. Please try again later.');
-        }
-      } catch (guidanceError) {
-        console.error('Guidance error:', guidanceError);
-        setCareerGuidance('❌ Error connecting to AI service. Please try again later.');
-      }
-      
-      setGuidanceLoading(false);
       setCurrentStep(1);
       setMaxStepReached(1);
     } else {
@@ -531,6 +506,7 @@ useEffect(() => {
     setIsSubmitting(false);
   }
 };
+
 
 
   const skipForNow = () => {
@@ -549,7 +525,7 @@ useEffect(() => {
   setGuidanceError(null);
   
   try {
-    const response = await fetch('http://localhost:5000/api/generate-career-guidance', {
+    const response = await fetch('https://careergudiance-3.onrender.com/api/generate-career-guidance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 

@@ -1,4 +1,6 @@
-import { auth, googleProvider, signInWithEmailAndPassword, signInWithPopup } from "../firebase";
+ 
+import { auth, googleProvider, signInWithEmailAndPassword, signInWithPopup, fetchSignInMethodsForEmail } from "../firebase";
+
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import './Auth.css';
@@ -24,18 +26,34 @@ export default function Login() {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    try {
-      setError("");
-      setLoading(true);
-      await signInWithPopup(auth, googleProvider);
-      navigate('/dashboard');
-    } catch (err) {
-      setError(err.message);
-    } finally {
+ const handleGoogleLogin = async () => {
+  try {
+    setError("");
+    setLoading(true);
+
+    // First, check if this email already exists
+    const providerData = await signInWithPopup(auth, googleProvider);
+    const email = providerData.user.email;
+
+    const methods = await fetchSignInMethodsForEmail(auth, email);
+
+    if (methods.includes('password')) {
+      // Email exists with password, show warning
+      setError(`This email is already registered with Email/Password. Please login using Email/Password.`);
       setLoading(false);
+      return;
     }
-  };
+
+    // Proceed with Google sign-in
+    navigate('/dashboard');
+
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <div className="auth-container">

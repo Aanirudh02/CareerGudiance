@@ -27,7 +27,7 @@ export default function SignUp() {
       setError("");
       setLoading(true);
       
-      const response = await axios.post('http://localhost:5000/api/send-otp', {
+      const response = await axios.post('https://careergudiance-3.onrender.com/api/send-otp', {
         email
       });
 
@@ -55,7 +55,7 @@ export default function SignUp() {
       setError("");
       setLoading(true);
 
-      const response = await axios.post('http://localhost:5000/api/verify-otp', {
+      const response = await axios.post('https://careergudiance-3.onrender.com/api/verify-otp', {
         email,
         otp
       });
