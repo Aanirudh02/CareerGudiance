@@ -13,8 +13,32 @@ const PORT = process.env.PORT || 5000;
 
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://inquisitive-lolly-f339e0.netlify.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:5174'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(bodyParser.json());
+
+
+// ✅ Health check endpoints
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Career Guidance API is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
 
 // Store OTPs temporarily
 const otpStore = new Map();
