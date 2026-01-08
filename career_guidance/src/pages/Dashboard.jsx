@@ -378,7 +378,7 @@ useEffect(() => {
         console.log('Checking profile for:', currentUser.email); // DEBUG
         
         const response = await fetch(
-          `https://https://careergudiance-3.onrender.com/api/get-profile/${currentUser.email}`
+          `https://careergudiance-3.onrender.com/api/get-profile/${currentUser.email}`
         );
 
         
@@ -482,7 +482,7 @@ useEffect(() => {
 
   try {
     // Step 1: Save profile to Cloudinary
-    const saveResponse = await fetch('https://https://careergudiance-3.onrender.com/api/save-profile', {
+    const saveResponse = await fetch('https://careergudiance-3.onrender.com/api/save-profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -527,7 +527,7 @@ useEffect(() => {
   setGuidanceError(null);
   
   try {
-    const response = await fetch('https://https://careergudiance-3.onrender.com/api/generate-career-guidance', {
+    const response = await fetch('https://careergudiance-3.onrender.com/api/generate-career-guidance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
