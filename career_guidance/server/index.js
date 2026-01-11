@@ -2926,7 +2926,7 @@ app.post('/api/generate-calendar-roadmap', async (req, res) => {
   const { email, forceRegenerate } = req.body;
   
   try {
-    const API_BASE_URL = process.env.API_BASE_URL || `http://localhost:${PORT}`;
+    const API_BASE_URL = process.env.API_BASE_URL || `https://careergudiance-10.onrender.com:${PORT}`;
     
     const profileRes = await fetch(`${API_BASE_URL}/api/get-profile/${email}`);
     const profileData = await profileRes.json();
@@ -3117,7 +3117,7 @@ app.post('/api/google-calendar-auth', async (req, res) => {
     // ✅ Use env variables for OAuth URL
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
-      `redirect_uri=${process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/google-calendar/callback'}&` +
+      `redirect_uri=${process.env.GOOGLE_REDIRECT_URI || 'https://careergudiance-10.onrender.com:5000/api/google-calendar/callback'}&` +
       `scope=https://www.googleapis.com/auth/calendar&` +
       `response_type=code&` +
       `access_type=offline&` +
