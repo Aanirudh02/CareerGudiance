@@ -17,13 +17,23 @@ const admin = require('firebase-admin');
 
 let serviceAccount;
 
+
 if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Render / production
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  try {
+    // Decode Base64 and parse JSON
+    serviceAccount = JSON.parse(
+      Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY, "base64").toString("utf8")
+    );
+  } catch (error) {
+    console.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:", error);
+  }
 } else {
-  // Local development only
-  //serviceAccount = require('./career-guidance-eef4b-firebase-adminsdk.json');
   console.log('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set - using local file is disabled for security');
+}
+
+if (!serviceAccount) {
+  console.error('❌ Firebase service account is missing or invalid. Exiting.');
+  process.exit(1); // Stop the server
 }
 
 admin.initializeApp({
