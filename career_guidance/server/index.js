@@ -22,7 +22,8 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 } else {
   // Local development only
-  serviceAccount = require('./career-guidance-eef4b-firebase-adminsdk.json');
+  //serviceAccount = require('./career-guidance-eef4b-firebase-adminsdk.json');
+  console.log('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set - using local file is disabled for security');
 }
 
 admin.initializeApp({
