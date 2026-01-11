@@ -313,6 +313,40 @@ const [careerGuidance, setCareerGuidance] = useState('');
 const [guidanceLoading, setGuidanceLoading] = useState(false);
 const [guidanceError, setGuidanceError] = useState(null);
 
+// ADD THIS STATE
+const [submittingQuiz, setSubmittingQuiz] = useState(false);
+
+
+// Quiz states - ADD THESE AFTER YOUR EXISTING STATES
+const [showQuizSetup, setShowQuizSetup] = useState(false);
+const [quizConfig, setQuizConfig] = useState({
+  rounds: 1,
+  questionsPerRound: 5,
+  difficulty: 'medium'
+});
+const [generatingQuiz, setGeneratingQuiz] = useState(false);
+const [activeQuiz, setActiveQuiz] = useState(null);
+const [currentRound, setCurrentRound] = useState(0);
+const [currentQuestion, setCurrentQuestion] = useState(0);
+const [userAnswers, setUserAnswers] = useState([]);
+const [quizTimer, setQuizTimer] = useState(0);
+const [questionTimer, setQuestionTimer] = useState(0);
+const [quizResults, setQuizResults] = useState(null);
+const [quizHistory, setQuizHistory] = useState(null);
+
+// Add after your existing states
+const [showToast, setShowToast] = useState(false);
+const [toastMessage, setToastMessage] = useState('');
+const [toastType, setToastType] = useState('success'); // 'success' | 'error'
+
+
+const [courseAnalysisLoading, setCourseAnalysisLoading] = useState(false);
+
+
+
+const API_BASE_URL = 'https://careerguidance-10.onrender.com:5000'; // CHANGE THIS
+
+
 
 
 
@@ -371,23 +405,23 @@ const [guidanceError, setGuidanceError] = useState(null);
   
 
 useEffect(() => {
+  // ✅ EXISTING: Check Profile Function
   const checkProfile = async () => {
     if (currentUser?.email) {
       setProfileLoading(true);
       try {
-        console.log('Checking profile for:', currentUser.email); // DEBUG
+        console.log('Checking profile for:', currentUser.email);
         
         const response = await fetch(
-          `https://careergudiance-3.onrender.com/api/get-profile/${currentUser.email}`
+          `https://careergudiance-10.onrender.com/api/get-profile/${currentUser.email}` // ✅ CHANGED TO LOCAL
         );
 
         
         const data = await response.json();
         
-        console.log('Backend response:', data); // DEBUG
+        console.log('Backend response:', data);
         
         if (data.exists && data.profile) {
-          // Profile exists - extract form fields
           const {
             email,
             username,
@@ -395,9 +429,8 @@ useEffect(() => {
             ...profileFormData
           } = data.profile;
           
-          console.log('Setting form data:', profileFormData); // DEBUG
+          console.log('Setting form data:', profileFormData); 
           
-          // Fill the form
           setFormData(prev => ({
             ...prev,
             ...profileFormData
@@ -405,22 +438,18 @@ useEffect(() => {
           
           setProfileExists(true);
           
-          // DO NOT show welcome popup
-          console.log('Profile found - skipping welcome popup'); // DEBUG
+          console.log('Profile found - skipping welcome popup');
           
         } else {
-          // No profile found
-          console.log('No profile found - will show welcome popup'); // DEBUG
+          console.log('No profile found - will show welcome popup');
           setProfileExists(false);
           
-          // Show welcome popup after 10 seconds ONLY if no profile
           setTimeout(() => {
             setShowWelcomePopup(true);
           }, 10000);
         }
       } catch (error) {
         console.error('Error checking profile:', error);
-        // On error, don't show popup
         setProfileExists(false);
       } finally {
         setProfileLoading(false);
@@ -428,8 +457,54 @@ useEffect(() => {
     }
   };
 
+  
+
+  // ✅ NEW: Fetch Quiz History Function
+  const fetchQuizHistory = async () => {
+    if (currentUser?.email) {
+      try {
+        const response = await fetch(
+          `https://careerguidance-10.onrender.com/api/quiz-results/${currentUser.email}` // ✅ LOCAL API
+        );
+        
+        const data = await response.json();
+        
+        if (data.hasQuizHistory) {
+          setQuizHistory(data.results);
+          console.log('Quiz history loaded:', data.results); // DEBUG
+        }
+      } catch (error) {
+        console.error('Error fetching quiz history:', error);
+      }
+    }
+  };
+
+  // ✅ CALL BOTH FUNCTIONS
   checkProfile();
-}, [currentUser]);
+  fetchQuizHistory(); // ✅ ADD THIS LINE
+
+}, [currentUser]); // Keep dependency as is
+
+
+// Quiz timer - ADD THIS NEW useEffect
+useEffect(() => {
+  let interval;
+  if (activeQuiz && !quizResults) {
+    interval = setInterval(() => {
+      setQuizTimer(prev => prev + 1);
+      setQuestionTimer(prev => prev + 1);
+    }, 1000);
+  }
+  return () => clearInterval(interval);
+}, [activeQuiz, quizResults]);
+
+// Add this right before {quizResults && (
+useEffect(() => {
+  if (quizResults) {
+    console.log('📊 Full Quiz Results:', quizResults);
+    console.log('📈 Comprehensive Analysis:', quizResults.comprehensiveAnalysis);
+  }
+}, [quizResults]);
 
 
 
@@ -477,12 +552,11 @@ useEffect(() => {
   };
 
 
- const handleSubmit = async () => {
+  const handleSubmit = async () => {
   setIsSubmitting(true);
 
   try {
-    // Step 1: Save profile to Cloudinary
-    const saveResponse = await fetch('https://careergudiance-3.onrender.com/api/save-profile', {
+    const saveResponse = await fetch('https://careerguidance-10.onrender.com/api/save-profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -494,16 +568,36 @@ useEffect(() => {
     const saveData = await saveResponse.json();
 
     if (saveData.success) {
-      setProfileExists(true);
+      // Close dialog
       setShowDialog(false);
       setCurrentStep(1);
       setMaxStepReached(1);
+      setProfileExists(true);
+      
+      // ✅ Show success toast
+      setToastMessage('Profile saved successfully!');
+      setToastType('success');
+      setShowToast(true);
+      
+      // Auto-hide toast after 3 seconds
+      setTimeout(() => setShowToast(false), 3000);
+      
     } else {
-      alert('Failed to save profile: ' + (saveData.error || 'Unknown error'));
+      // ✅ Show error toast
+      setToastMessage('Failed to save profile: ' + (saveData.error || 'Unknown error'));
+      setToastType('error');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
     }
   } catch (error) {
     console.error('Error saving profile:', error);
-    alert('Failed to save profile. Please try again.');
+    
+    // ✅ Show error toast
+    setToastMessage('Failed to save profile. Please try again.');
+    setToastType('error');
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+    
   } finally {
     setIsSubmitting(false);
   }
@@ -527,7 +621,7 @@ useEffect(() => {
   setGuidanceError(null);
   
   try {
-    const response = await fetch('https://careergudiance-3.onrender.com/api/generate-career-guidance', {
+    const response = await fetch('https://careergudiance-10.onrender.com/api/generate-career-guidance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -550,6 +644,186 @@ useEffect(() => {
     setGuidanceLoading(false);
   }
 };
+
+
+
+
+// ✅ ADD THESE AFTER fetchCareerGuidance function
+
+const handleGenerateQuiz = async () => {
+  setGeneratingQuiz(true);
+  try {
+    const response = await fetch('https://careerguidance-10.onrender.com/api/generate-quiz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentUser.email,
+        ...quizConfig
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      setActiveQuiz(data.quiz);
+      setCurrentRound(0);
+      setCurrentQuestion(0);
+      setUserAnswers(data.quiz.quizData.map(round => ({
+        roundNumber: round.roundNumber,
+        category: round.category,
+        questions: round.questions.map(q => ({
+          questionId: q.questionId,
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+          skillTested: q.skillTested,
+          userAnswer: null,
+          timeTaken: 0
+        }))
+      })));
+      setShowQuizSetup(false);
+      setQuizTimer(0);
+      setQuestionTimer(0);
+    }
+  } catch (error) {
+    console.error('Error generating quiz:', error);
+    alert('Failed to generate quiz. Please try again.');
+  } finally {
+    setGeneratingQuiz(false);
+  }
+};
+
+const handleAnswerSelect = (answer) => {
+  const newAnswers = [...userAnswers];
+  newAnswers[currentRound].questions[currentQuestion].userAnswer = answer;
+  newAnswers[currentRound].questions[currentQuestion].timeTaken = questionTimer;
+  setUserAnswers(newAnswers);
+  setQuestionTimer(0);
+};
+
+const handleNextQuestion = () => {
+  const totalQuestionsInRound = activeQuiz.quizData[currentRound].questions.length;
+  
+  if (currentQuestion < totalQuestionsInRound - 1) {
+    setCurrentQuestion(currentQuestion + 1);
+  } else if (currentRound < activeQuiz.quizData.length - 1) {
+    setCurrentRound(currentRound + 1);
+    setCurrentQuestion(0);
+  } else {
+    handleSubmitQuiz();
+  }
+};
+
+// ✅ ADD THIS NEW FUNCTION - Course Analysis Handler
+const handleCourse = async () => {
+  if (!profileExists) {
+    setToastMessage('Please complete your profile first!');
+    setToastType('error');
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+    return;
+  }
+
+  setCourseAnalysisLoading(true);
+  
+  try {
+    const response = await fetch('https://careerguidance-10.onrender.com/api/analyze-courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentUser.email,
+        profileData: formData
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      // Store data in localStorage for Course.jsx to access
+      localStorage.setItem('courseAnalysisData', JSON.stringify(data.courseAnalysis));
+      localStorage.setItem('userProfileData', JSON.stringify(formData));
+      
+      // Redirect to Course page
+      navigate('/dashboard/courses');
+    } else {
+      throw new Error(data.error || 'Failed to analyze courses');
+    }
+  } catch (error) {
+    console.error('Course analysis error:', error);
+    setToastMessage('Failed to analyze courses. Please try again.');
+    setToastType('error');
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  } finally {
+    setCourseAnalysisLoading(false);
+  }
+};
+
+
+const handleSubmitQuiz = async () => {
+  setSubmittingQuiz(true);
+  
+  try {
+    console.log('📤 Submitting quiz...'); // ✅ ADD
+    
+    const response = await fetch('https://careerguidance-10.onrender.com/api/submit-quiz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentUser.email,
+        quizId: activeQuiz.quizId,
+        answers: { rounds: userAnswers },
+        timeTaken: quizTimer,
+        configuration: activeQuiz.configuration
+      })
+    });
+
+    console.log('📡 Response status:', response.status); // ✅ ADD
+    const data = await response.json();
+    console.log('📊 Backend response:', data); // ✅ ADD
+    console.log('📋 Quiz results data:', data.results); // ✅ ADD
+
+    if (data.success) {
+      console.log('✅ Setting quiz results:', data.results); // ✅ ADD
+      setQuizResults(data.results);
+      
+      // Refresh quiz history
+      const historyResponse = await fetch(
+        `https://careerguidance-10.onrender.com/api/quiz-results/${currentUser.email}`
+      );
+      const historyData = await historyResponse.json();
+      if (historyData.hasQuizHistory) {
+        setQuizHistory(historyData.results);
+      }
+      
+      setToastMessage('Quiz submitted successfully! Check your email.');
+      setToastType('success');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      
+    } else {
+      throw new Error(data.error || 'Failed to submit quiz');
+    }
+  } catch (error) {
+    console.error('❌ Quiz submission error:', error);
+    
+    setToastMessage('Failed to submit quiz. Please try again.');
+    setToastType('error');
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+    
+  } finally {
+    setSubmittingQuiz(false);
+  }
+};
+
+const formatTime = (seconds) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
 
 
   const technicalSkillsList = [
@@ -604,10 +878,45 @@ useEffect(() => {
         </div>
         <div className="navbar-menu">
           <a href="#home">Home</a>
-          <a href="#courses">Courses</a>
+          <a 
+  href="#courses" 
+  onClick={(e) => {
+    e.preventDefault();
+    handleCourse();
+  }}
+  style={{ cursor: 'pointer' }}
+>
+  Courses
+</a>
           <a href="#resources">Resources</a>
           <a href="#about">About</a>
+          
+
         </div>
+
+        
+  <div className="navbar-profile">
+    {/* ✅ ADD CALENDAR ICON HERE - BEFORE PROFILE BUTTON */}
+    <button 
+      className="calendar-icon-btn"
+      onClick={() => navigate('/dashboard/calendar')}
+      title="Career Calendar"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="6" width="18" height="15" rx="2" strokeWidth="2"/>
+        <path d="M3 10h18M8 3v4M16 3v4" strokeWidth="2" strokeLinecap="round"/>
+      </svg>
+    </button>
+
+    {/* Existing Profile Button */}
+    <button 
+      className="profile-button" 
+      onClick={() => setShowProfileMenu(!showProfileMenu)}
+    >
+      {/* ... existing profile code ... */}
+    </button>
+  </div>
+
         <div className="navbar-profile">
           <button 
             className="profile-button"
@@ -682,17 +991,48 @@ useEffect(() => {
   <p>{profileExists ? 'View AI Recommendations' : 'Complete profile first'}</p>
 </div>
 
-          <div className="dashboard-card">
-            <div className="card-icon">📊</div>
-            <h3>Progress</h3>
-            <p>Track your learning journey</p>
-            <p>click here </p>
-          </div>
-          <div className="dashboard-card">
-            <div className="card-icon">💼</div>
-            <h3>Job Opportunities</h3>
-            <p>Explore career options</p>
-          </div>
+          {/* REPLACE YOUR EXISTING CAREER PATH CARD WITH THIS: */}
+<div className="dashboard-card" onClick={() => {
+  if (profileExists) {
+    setShowQuizSetup(true);
+  } else {
+    alert('Please complete your profile first!');
+  }
+}} style={{ cursor: 'pointer' }}>
+  <div className="card-icon">🎯</div>
+  <h3>Career Assessment Quiz</h3>
+  <p>{profileExists ? 'Take personalized quiz' : 'Complete profile first'}</p>
+  {quizHistory && (
+    <small style={{display:'block',marginTop:'8px',color:'#667eea',fontWeight:'600'}}>
+      Last score: {quizHistory.quizHistory[0]?.overallScore.percentage}%
+    </small>
+  )}
+</div>
+
+  {/* GitHub Analysis Card */}
+<div 
+  className="dashboard-card" 
+  onClick={() => {
+    if (profileExists && formData?.githubUrl) {  // ✅ Use formData instead
+      navigate('/dashboard/analysis');
+    } else if (!formData?.githubUrl) {
+      alert('Please add your GitHub URL in your profile first!');
+    } else {
+      alert('Please complete your profile first!');
+    }
+  }}
+  style={{ cursor: 'pointer' }}
+>
+  <div className="card-icon">🧠</div>
+  <h3>GitHub Portfolio Intelligence</h3>
+  <p>
+    {profileExists && formData?.githubUrl 
+      ? 'Analyze your coding journey with AI' 
+      : 'Add GitHub URL in profile'}
+  </p>
+</div>
+
+
         </div>
       </div>
 
@@ -1566,6 +1906,716 @@ useEffect(() => {
     </div>
   </div>
 )}
+
+{/* ADD THESE BEFORE THE CLOSING </div> OF dashboard-container */}
+
+{/* Quiz Setup Modal */}
+{showQuizSetup && !activeQuiz && (
+  <div className="quiz-setup-modal">
+    <div className="quiz-setup-card">
+      <h2>🎯 Career Assessment Quiz</h2>
+      <p>Take a personalized quiz based on your profile</p>
+
+      <div className="quiz-config">
+        <div className="config-group">
+          <label>Number of Rounds (1-5)</label>
+          <select 
+            value={quizConfig.rounds}
+            onChange={(e) => setQuizConfig({...quizConfig, rounds: parseInt(e.target.value)})}
+          >
+            {[1, 2, 3, 4, 5].map(n => (
+              <option key={n} value={n}>{n} Round{n > 1 ? 's' : ''}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="config-group">
+          <label>Questions per Round</label>
+          <select 
+            value={quizConfig.questionsPerRound}
+            onChange={(e) => setQuizConfig({...quizConfig, questionsPerRound: parseInt(e.target.value)})}
+          >
+            <option value={5}>5 Questions</option>
+            <option value={10}>10 Questions</option>
+            <option value={15}>15 Questions</option>
+          </select>
+        </div>
+
+        <div className="config-group">
+          <label>Difficulty Level</label>
+          <select 
+            value={quizConfig.difficulty}
+            onChange={(e) => setQuizConfig({...quizConfig, difficulty: e.target.value})}
+          >
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="quiz-summary">
+        <strong>Total Questions: {quizConfig.rounds * quizConfig.questionsPerRound}</strong>
+      </div>
+
+      <div className="quiz-setup-actions">
+        <button 
+          className="btn-secondary" 
+          onClick={() => setShowQuizSetup(false)}
+          disabled={generatingQuiz}
+        >
+          Cancel
+        </button>
+        <button 
+          className="btn-primary" 
+          onClick={handleGenerateQuiz}
+          disabled={generatingQuiz}
+        >
+          {generatingQuiz ? '🔄 Generating Quiz...' : '🚀 Start Quiz'}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Active Quiz Interface */}
+{activeQuiz && !quizResults && (
+  <div className="quiz-interface">
+    <div className="quiz-header">
+      <div className="quiz-progress">
+        <span>Round {currentRound + 1}/{activeQuiz.quizData.length}</span>
+        <span>Question {currentQuestion + 1}/{activeQuiz.quizData[currentRound].questions.length}</span>
+        <span>Total: {currentRound * quizConfig.questionsPerRound + currentQuestion + 1}/{activeQuiz.configuration.totalQuestions}</span>
+      </div>
+      <div className="quiz-timers">
+        <span className="total-timer">⏱️ Total: {formatTime(quizTimer)}</span>
+        <span className="question-timer">⏰ Question: {formatTime(questionTimer)}</span>
+      </div>
+    </div>
+
+    <div className="quiz-card">
+      <div className="round-category">
+        <span className="category-badge">{activeQuiz.quizData[currentRound].category}</span>
+      </div>
+
+      <h3 className="question-text">
+        {activeQuiz.quizData[currentRound].questions[currentQuestion].question}
+      </h3>
+
+      <div className="options-container">
+        {Object.entries(activeQuiz.quizData[currentRound].questions[currentQuestion].options).map(([key, value]) => (
+          <button
+            key={key}
+            className={`option-btn ${userAnswers[currentRound]?.questions[currentQuestion]?.userAnswer === key ? 'selected' : ''}`}
+            onClick={() => handleAnswerSelect(key)}
+          >
+            <span className="option-key">{key}</span>
+            <span className="option-value">{value}</span>
+          </button>
+        ))}
+      </div>
+
+    {/* REPLACE YOUR SUBMIT BUTTON WITH THIS */}
+<div className="quiz-navigation">
+  <button 
+    className="btn-next"
+    onClick={handleNextQuestion}
+    disabled={!userAnswers[currentRound]?.questions[currentQuestion]?.userAnswer || submittingQuiz}
+  >
+    {submittingQuiz ? (
+      <>
+        <span style={{
+          display: 'inline-block',
+          width: '16px',
+          height: '16px',
+          border: '2px solid white',
+          borderTop: '2px solid transparent',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          marginRight: '8px'
+        }}></span>
+        Submitting...
+      </>
+    ) : (
+      currentQuestion === activeQuiz.quizData[currentRound].questions.length - 1 && 
+      currentRound === activeQuiz.quizData.length - 1 
+        ? '✅ Submit Quiz' 
+        : '➡️ Next Question'
+    )}
+  </button>
+</div>
+    </div>
+
+    <div className="progress-bar-container">
+      <div 
+        className="progress-bar" 
+        style={{width: `${((currentRound * quizConfig.questionsPerRound + currentQuestion + 1) / activeQuiz.configuration.totalQuestions) * 100}%`}}
+      ></div>
+    </div>
+  </div>
+)}
+
+
+
+{/* COMPLETE QUIZ RESULTS DIALOG */}
+{quizResults && (
+  <div className="quiz-results-overlay" style={{
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0, 0, 0, 0.8)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10000,
+    padding: '20px'
+  }}>
+    <div style={{
+      background: 'white',
+      borderRadius: '16px',
+      maxWidth: '1200px',
+      width: '100%',
+      maxHeight: '90vh',
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      {/* Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        borderBottom: '2px solid #e2e8f0',
+        padding: '24px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: '24px' }}>
+            🎉 Quiz #{quizResults.quizNumber} - Complete Career Plan
+          </h2>
+          <p style={{ margin: '8px 0 0 0', opacity: 0.9, fontSize: '14px' }}>
+            Check your email for the full detailed report!
+          </p>
+        </div>
+        <button 
+          onClick={() => {
+            setQuizResults(null);
+            setActiveQuiz(null);
+            setCurrentRound(0);
+            setCurrentQuestion(0);
+            setUserAnswers([]);
+          }}
+          style={{
+            background: 'rgba(255,255,255,0.2)',
+            border: 'none',
+            color: 'white',
+            width: '36px',
+            height: '36px',
+            borderRadius: '50%',
+            fontSize: '20px',
+            cursor: 'pointer'
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Scrollable Content */}
+      <div style={{ 
+        padding: '30px', 
+        overflowY: 'auto',
+        flex: 1
+      }}>
+        {/* Score Summary Cards */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: '20px',
+          marginBottom: '40px'
+        }}>
+          {/* Overall Score */}
+          <div style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            textAlign: 'center',
+            boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', opacity: 0.9, fontSize: '16px' }}>Overall Score</h3>
+            <div style={{ fontSize: '56px', fontWeight: 'bold', margin: '15px 0' }}>
+              {quizResults?.overallScore?.percentage || 0}%
+            </div>
+            <p style={{ margin: '8px 0', opacity: 0.95, fontSize: '16px' }}>
+              {quizResults?.overallScore?.totalCorrect || 0}/{quizResults?.overallScore?.totalQuestions || 0} Correct
+            </p>
+            <p style={{ margin: '8px 0', opacity: 0.9, fontSize: '14px' }}>
+              ⏱️ {formatTime((quizResults?.overallScore?.timeTaken || 0) / 1000)}
+            </p>
+          </div>
+
+          {/* Career Readiness */}
+          <div style={{
+            background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+            color: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            textAlign: 'center',
+            boxShadow: '0 4px 12px rgba(245, 87, 108, 0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', opacity: 0.9, fontSize: '16px' }}>Career Readiness</h3>
+            <div style={{ fontSize: '56px', fontWeight: 'bold', margin: '15px 0' }}>
+              {quizResults?.comprehensiveAnalysis?.careerReadiness || 0}/100
+            </div>
+            <p style={{ margin: '8px 0', fontWeight: '600', fontSize: '16px' }}>
+              📊 Percentile: {quizResults?.comprehensiveAnalysis?.percentile || 0}th
+            </p>
+          </div>
+
+          {/* Primary Career */}
+          <div style={{
+            background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+            color: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            textAlign: 'center',
+            boxShadow: '0 4px 12px rgba(79, 172, 254, 0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', opacity: 0.9, fontSize: '16px' }}>Best Career Match</h3>
+            <div style={{ fontSize: '20px', fontWeight: 'bold', margin: '15px 0' }}>
+              {quizResults?.comprehensiveAnalysis?.primaryCareer?.role || 'Analyzing...'}
+            </div>
+            <p style={{ margin: '8px 0', fontWeight: '600', fontSize: '24px' }}>
+              {quizResults?.comprehensiveAnalysis?.primaryCareer?.matchPercentage || 0}%
+            </p>
+            <p style={{ margin: '8px 0', opacity: 0.9, fontSize: '14px' }}>
+              💰 {quizResults?.comprehensiveAnalysis?.primaryCareer?.averageSalary || 'TBD'}
+            </p>
+          </div>
+        </div>
+
+        {/* Strengths & Weaknesses */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: '20px',
+          marginBottom: '30px'
+        }}>
+          {/* Strengths */}
+          <div style={{
+            background: '#f0fdf4',
+            border: '2px solid #86efac',
+            borderRadius: '12px',
+            padding: '24px'
+          }}>
+            <h3 style={{ 
+              color: '#16a34a', 
+              margin: '0 0 16px 0',
+              fontSize: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              💪 Strength Areas
+            </h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {(quizResults?.comprehensiveAnalysis?.strengthAreas || []).map((skill, i) => (
+                <span key={i} style={{
+                  background: '#86efac',
+                  color: '#166534',
+                  padding: '8px 16px',
+                  borderRadius: '20px',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}>
+                  ✓ {skill}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Weaknesses */}
+          <div style={{
+            background: '#fff7ed',
+            border: '2px solid #fdba74',
+            borderRadius: '12px',
+            padding: '24px'
+          }}>
+            <h3 style={{ 
+              color: '#ea580c', 
+              margin: '0 0 16px 0',
+              fontSize: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              📈 Areas to Improve
+            </h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {(quizResults?.comprehensiveAnalysis?.weaknessAreas || []).map((skill, i) => (
+                <span key={i} style={{
+                  background: '#fdba74',
+                  color: '#9a3412',
+                  padding: '8px 16px',
+                  borderRadius: '20px',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}>
+                  ⚠️ {skill}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Career Paths */}
+        <div style={{
+          background: 'white',
+          border: '2px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '24px',
+          marginBottom: '24px'
+        }}>
+          <h3 style={{ color: '#1a202c', margin: '0 0 20px 0', fontSize: '18px' }}>
+            🎯 Recommended Career Paths
+          </h3>
+          
+          {/* Primary Career */}
+          {quizResults?.comprehensiveAnalysis?.primaryCareer && (
+            <div style={{
+              background: '#f7fafc',
+              border: '2px solid #667eea',
+              borderRadius: '10px',
+              padding: '20px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                <h4 style={{ color: '#667eea', margin: 0, fontSize: '16px' }}>
+                  🥇 {quizResults.comprehensiveAnalysis.primaryCareer.role}
+                </h4>
+                <span style={{
+                  background: '#667eea',
+                  color: 'white',
+                  padding: '4px 12px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}>
+                  {quizResults.comprehensiveAnalysis.primaryCareer.matchPercentage}% Match
+                </span>
+              </div>
+              <p style={{ color: '#4a5568', fontSize: '14px', margin: '8px 0', lineHeight: '1.6' }}>
+                {quizResults.comprehensiveAnalysis.primaryCareer.whyGoodFit}
+              </p>
+              <div style={{ display: 'flex', gap: '16px', marginTop: '12px', fontSize: '13px', color: '#718096' }}>
+                <span>💰 {quizResults.comprehensiveAnalysis.primaryCareer.averageSalary}</span>
+                <span>🏢 {quizResults.comprehensiveAnalysis.primaryCareer.topCompanies?.slice(0, 3).join(', ')}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Secondary Career */}
+          {quizResults?.comprehensiveAnalysis?.secondaryCareer && (
+            <div style={{
+              background: '#fffbeb',
+              border: '2px solid #fbbf24',
+              borderRadius: '10px',
+              padding: '20px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                <h4 style={{ color: '#d97706', margin: 0, fontSize: '16px' }}>
+                  🥈 {quizResults.comprehensiveAnalysis.secondaryCareer.role}
+                </h4>
+                <span style={{
+                  background: '#fbbf24',
+                  color: '#78350f',
+                  padding: '4px 12px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}>
+                  {quizResults.comprehensiveAnalysis.secondaryCareer.matchPercentage}% Match
+                </span>
+              </div>
+              <p style={{ color: '#92400e', fontSize: '14px', margin: '8px 0', lineHeight: '1.6' }}>
+                {quizResults.comprehensiveAnalysis.secondaryCareer.whyGoodFit}
+              </p>
+              <div style={{ fontSize: '13px', color: '#92400e', marginTop: '8px' }}>
+                💰 {quizResults.comprehensiveAnalysis.secondaryCareer.averageSalary}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Learning Roadmap */}
+        {quizResults?.comprehensiveAnalysis?.learningRoadmap && (
+          <div style={{
+            background: 'white',
+            border: '2px solid #e2e8f0',
+            borderRadius: '12px',
+            padding: '24px',
+            marginBottom: '24px'
+          }}>
+            <h3 style={{ color: '#1a202c', margin: '0 0 20px 0', fontSize: '18px' }}>
+              📚 Your Learning Roadmap
+            </h3>
+            
+            {/* Immediate */}
+            <div style={{ background: '#e8f5e9', padding: '16px', borderRadius: '8px', marginBottom: '12px', borderLeft: '4px solid #4caf50' }}>
+              <h4 style={{ color: '#2e7d32', margin: '0 0 8px 0', fontSize: '15px' }}>
+                🚀 {quizResults.comprehensiveAnalysis.learningRoadmap.immediate?.title}
+              </h4>
+              <p style={{ fontSize: '13px', color: '#558b2f', margin: '4px 0' }}>
+                ⏰ {quizResults.comprehensiveAnalysis.learningRoadmap.immediate?.estimatedHours} hours
+              </p>
+              <ul style={{ margin: '8px 0 0 20px', padding: 0, color: '#1b5e20' }}>
+                {quizResults.comprehensiveAnalysis.learningRoadmap.immediate?.tasks?.map((task, i) => (
+                  <li key={i} style={{ fontSize: '14px', margin: '4px 0' }}>{task}</li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Short Term */}
+            <div style={{ background: '#fff3e0', padding: '16px', borderRadius: '8px', marginBottom: '12px', borderLeft: '4px solid #ff9800' }}>
+              <h4 style={{ color: '#e65100', margin: '0 0 8px 0', fontSize: '15px' }}>
+                📅 {quizResults.comprehensiveAnalysis.learningRoadmap.shortTerm?.title}
+              </h4>
+              <p style={{ fontSize: '13px', color: '#ef6c00', margin: '4px 0' }}>
+                ⏰ {quizResults.comprehensiveAnalysis.learningRoadmap.shortTerm?.estimatedHours} hours
+              </p>
+              <ul style={{ margin: '8px 0 0 20px', padding: 0, color: '#e65100' }}>
+                {quizResults.comprehensiveAnalysis.learningRoadmap.shortTerm?.tasks?.map((task, i) => (
+                  <li key={i} style={{ fontSize: '14px', margin: '4px 0' }}>{task}</li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Long Term */}
+            <div style={{ background: '#e3f2fd', padding: '16px', borderRadius: '8px', borderLeft: '4px solid #2196f3' }}>
+              <h4 style={{ color: '#0277bd', margin: '0 0 8px 0', fontSize: '15px' }}>
+                🎯 {quizResults.comprehensiveAnalysis.learningRoadmap.longTerm?.title}
+              </h4>
+              <p style={{ fontSize: '13px', color: '#01579b', margin: '4px 0' }}>
+                ⏰ {quizResults.comprehensiveAnalysis.learningRoadmap.longTerm?.estimatedHours} hours
+              </p>
+              <ul style={{ margin: '8px 0 0 20px', padding: 0, color: '#01579b' }}>
+                {quizResults.comprehensiveAnalysis.learningRoadmap.longTerm?.tasks?.map((task, i) => (
+                  <li key={i} style={{ fontSize: '14px', margin: '4px 0' }}>{task}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Recommendations */}
+        {quizResults?.comprehensiveAnalysis?.recommendations && quizResults.comprehensiveAnalysis.recommendations.length > 0 && (
+          <div style={{
+            background: '#eff6ff',
+            border: '2px solid #93c5fd',
+            borderRadius: '12px',
+            padding: '24px',
+            marginBottom: '24px'
+          }}>
+            <h3 style={{ color: '#1e40af', margin: '0 0 16px 0', fontSize: '18px' }}>
+              🎯 Action Items (Start Today!)
+            </h3>
+            <ul style={{ margin: 0, paddingLeft: '20px', color: '#1e3a8a' }}>
+              {quizResults.comprehensiveAnalysis.recommendations.map((rec, i) => (
+                <li key={i} style={{ marginBottom: '12px', lineHeight: '1.6', fontSize: '15px' }}>
+                  <strong>{rec}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Round Performance */}
+        <div style={{
+          background: 'white',
+          border: '2px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '24px'
+        }}>
+          <h3 style={{ color: '#1a202c', margin: '0 0 20px 0', fontSize: '18px' }}>
+            📊 Round-wise Performance
+          </h3>
+          {(quizResults?.rounds || []).map((round, i) => (
+            <div key={i} style={{ marginBottom: '20px' }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '8px'
+              }}>
+                <span style={{ fontWeight: '600', color: '#4a5568', fontSize: '15px' }}>
+                  {round.category || `Round ${i + 1}`}
+                </span>
+                <span style={{
+                  background: round.percentage >= 70 ? '#86efac' : round.percentage >= 50 ? '#fdba74' : '#fca5a5',
+                  color: round.percentage >= 70 ? '#166534' : round.percentage >= 50 ? '#9a3412' : '#991b1b',
+                  padding: '4px 12px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}>
+                  {round.roundScore}/{round.totalQuestions} ({round.percentage}%)
+                </span>
+              </div>
+              <div style={{
+                background: '#e2e8f0',
+                height: '8px',
+                borderRadius: '4px',
+                overflow: 'hidden'
+              }}>
+                <div style={{
+                  background: round.percentage >= 70 ? '#16a34a' : round.percentage >= 50 ? '#ea580c' : '#dc2626',
+                  height: '100%',
+                  width: `${round.percentage}%`,
+                  transition: 'width 0.3s ease'
+                }}></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Email Notice */}
+        <div style={{
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          color: 'white',
+          padding: '24px',
+          borderRadius: '12px',
+          textAlign: 'center',
+          marginTop: '30px'
+        }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>
+            📧 Complete Report Sent to Your Email!
+          </h3>
+          <p style={{ margin: 0, opacity: 0.9, fontSize: '14px' }}>
+            Check your inbox for detailed resources, practice platforms, project ideas, certifications, and more!
+          </p>
+        </div>
+
+        {/* Close Button */}
+        <div style={{ marginTop: '30px', textAlign: 'center' }}>
+          <button
+            onClick={() => {
+              setQuizResults(null);
+              setActiveQuiz(null);
+              setCurrentRound(0);
+              setCurrentQuestion(0);
+              setUserAnswers([]);
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white',
+              border: 'none',
+              padding: '14px 32px',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(102, 126, 234, 0.3)'
+            }}
+          >
+            ✅ Close Results
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Toast Notification */}
+{showToast && (
+  <div className={`toast toast-${toastType}`}>
+    <div className="toast-content">
+      {toastType === 'success' ? '✅' : '❌'} {toastMessage}
+    </div>
+  </div>
+)}
+
+{/* ADD THIS BEFORE CLOSING </div> OF quiz-interface */}
+{submittingQuiz && (
+  <div style={{
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0, 0, 0, 0.7)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999
+  }}>
+    <div style={{
+      background: 'white',
+      padding: '40px',
+      borderRadius: '12px',
+      textAlign: 'center',
+      maxWidth: '400px'
+    }}>
+      <div style={{
+        width: '50px',
+        height: '50px',
+        border: '4px solid #e2e8f0',
+        borderTop: '4px solid #667eea',
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        margin: '0 auto 20px'
+      }}></div>
+      <h3 style={{ color: '#667eea', marginBottom: '12px' }}>
+        📤 Submitting Your Quiz
+      </h3>
+      <p style={{ color: '#718096', fontSize: '14px' }}>
+        Please wait while we process your answers...
+      </p>
+    </div>
+  </div>
+)}
+{/* Course Analysis Loading */}
+{courseAnalysisLoading && (
+  <div style={{
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0, 0, 0, 0.7)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999
+  }}>
+    <div style={{
+      background: 'white',
+      padding: '40px',
+      borderRadius: '12px',
+      textAlign: 'center',
+      maxWidth: '400px'
+    }}>
+      <div style={{
+        width: '50px',
+        height: '50px',
+        border: '4px solid #e2e8f0',
+        borderTop: '4px solid #667eea',
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        margin: '0 auto 20px'
+      }}></div>
+      <h3 style={{ color: '#667eea', marginBottom: '12px' }}>
+        📚 Analyzing Courses
+      </h3>
+      <p style={{ color: '#718096', fontSize: '14px' }}>
+        Finding personalized course recommendations...
+      </p>
+    </div>
+  </div>
+)}
+
 
 
     </div>

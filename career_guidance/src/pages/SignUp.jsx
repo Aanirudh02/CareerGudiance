@@ -20,6 +20,8 @@ export default function SignUp() {
     
     if (!email) {
       setError("Please enter your email");
+
+      
       return;
     }
 
@@ -27,7 +29,7 @@ export default function SignUp() {
       setError("");
       setLoading(true);
       
-      const response = await axios.post('https://careergudiance-3.onrender.com/api/send-otp', {
+      const response = await axios.post('https://careerguidance-10.onrender.com/api/send-otp', {
         email
       });
 
@@ -55,7 +57,7 @@ export default function SignUp() {
       setError("");
       setLoading(true);
 
-      const response = await axios.post('https://careergudiance-3.onrender.com/api/verify-otp', {
+      const response = await axios.post('https://careerguidance-10.onrender.com/api/verify-otp', {
         email,
         otp
       });
