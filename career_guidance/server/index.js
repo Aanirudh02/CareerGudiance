@@ -17,23 +17,19 @@ const admin = require('firebase-admin');
 
 let serviceAccount;
 
-
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+// Try to parse from environment variable
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   try {
-    // Decode Base64 and parse JSON
-    serviceAccount = JSON.parse(
-      Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY, "base64").toString("utf8")
-    );
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    console.log('✅ Firebase credentials loaded from FIREBASE_SERVICE_ACCOUNT_JSON');
   } catch (error) {
-    console.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:", error);
+    console.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:", error);
   }
-} else {
-  console.log('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set - using local file is disabled for security');
 }
 
 if (!serviceAccount) {
-  console.error('❌ Firebase service account is missing or invalid. Exiting.');
-  process.exit(1); // Stop the server
+  console.error('❌ Firebase service account is missing. Please set FIREBASE_SERVICE_ACCOUNT_JSON in Render environment variables.');
+  process.exit(1);
 }
 
 admin.initializeApp({
