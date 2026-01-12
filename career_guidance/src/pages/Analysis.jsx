@@ -27,35 +27,44 @@ export default function Analysis() {
     fetchProfileData();
   }, [currentUser, navigate]);
 
-  const fetchProfileData = async () => {
-    try {
-      setLoading(true);
+ const fetchProfileData = async () => {
+  try {
+    setLoading(true);
+    
+    // ✅ FIXED: Match your actual server URL + encode email
+    const response = await fetch(
+      `https://careergudiance-10.onrender.com/api/get-profile/${encodeURIComponent(currentUser.email)}`
+    );
+    const data = await response.json();
+    
+    console.log('✅ Profile fetch response:', data); // ✅ ADD DEBUG
+    
+    if (data.exists && data.profile) {
+      setProfileData(data.profile);
+      setLoading(false);
       
-      const response = await fetch(`https://careerguidance-10.onrender.com/api/get-profile/${currentUser.email}`);
-      const data = await response.json();
-      
-      if (data.exists && data.profile) {
-        setProfileData(data.profile);
-        setLoading(false);
-        
-        if (data.profile.githubUrl) {
-          const username = extractGithubUsername(data.profile.githubUrl);
-          if (username) {
-            analyzeGithubProfile(username);
-          }
+      if (data.profile.githubUrl) {
+        const username = extractGithubUsername(data.profile.githubUrl);
+        console.log('✅ Extracted GitHub username:', username); // ✅ ADD DEBUG
+        if (username) {
+          analyzeGithubProfile(username);
         } else {
-          setError('No GitHub URL found in your profile. Please add it in your profile settings.');
+          setError('Invalid GitHub URL format');
         }
       } else {
-        setLoading(false);
-        setError('Profile not found. Please complete your profile first.');
+        setError('No GitHub URL found in your profile. Please add it in your profile settings.');
       }
-    } catch (err) {
+    } else {
       setLoading(false);
-      setError('Failed to load profile data');
-      console.error(err);
+      setError('Profile not found. Please complete your profile first.');
     }
-  };
+  } catch (err) {
+    setLoading(false);
+    setError('Failed to load profile data: ' + err.message); // ✅ SHOW ERROR DETAILS
+    console.error('❌ Profile fetch error:', err);
+  }
+};
+
 
   const extractGithubUsername = (url) => {
     const match = url.match(/github\.com\/([^\/]+)/);
@@ -63,33 +72,37 @@ export default function Analysis() {
   };
 
   const analyzeGithubProfile = async (username) => {
-    setAnalyzing(true);
-    try {
-      const response = await fetch('https://careerguidance-10.onrender.com/api/analyze-github', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: currentUser.email,
-          githubUsername: username,
-          profileData: profileData
-        })
-      });
+  setAnalyzing(true);
+  try {
+    console.log('🔍 Analyzing GitHub:', username); // ✅ ADD DEBUG
+    
+    // ✅ FIXED: Match your actual server URL
+    const response = await fetch('https://careergudiance-10.onrender.com/api/analyze-github', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentUser.email,
+        githubUsername: username,
+        profileData: profileData
+      })
+    });
 
-      const data = await response.json();
-      
-      if (data.success) {
-        console.log('Full GitHub Data:', data);
-        setGithubData(data);
-      } else {
-        setError(data.error || 'Failed to analyze GitHub profile');
-      }
-    } catch (err) {
-      setError('Error analyzing GitHub profile');
-      console.error(err);
-    } finally {
-      setAnalyzing(false);
+    const data = await response.json();
+    console.log('✅ GitHub analysis response:', data); // ✅ ADD DEBUG
+    
+    if (data.success) {
+      console.log('Full GitHub Data:', data);
+      setGithubData(data);
+    } else {
+      setError(data.error || 'Failed to analyze GitHub profile');
     }
-  };
+  } catch (err) {
+    setError('Error analyzing GitHub profile: ' + err.message);
+    console.error('❌ GitHub analysis error:', err);
+  } finally {
+    setAnalyzing(false);
+  }
+};
 
   if (loading) {
     return (
