@@ -40,26 +40,74 @@ const db = admin.firestore();
 console.log('✅ Firebase initialized');
 
 
-
-
-
-// Middleware
-app.use(cors({
+// ==================== ✅ FIXED CORS MIDDLEWARE ====================
+const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, curl)
-    if (!origin) return callback(null, true);
-    
-    // Allow all origins for now
+    // ✅ List of allowed origins
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://127.0.0.1:5173',
+      'https://careergudiance-10.onrender.com',
+      'https://careerguidance-10.onrender.com',
+      'https://career-guidance-eef4b.web.app/',
+      // ✅ ADD YOUR FRONTEND URL HERE IF DEPLOYED
+    ];
+
+    // ✅ Allow requests with no origin (mobile apps, Postman, curl)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // ✅ Allow all origins temporarily (remove in production)
     callback(null, true);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-// Add OPTIONS handling for preflight requests
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Accept', 
+    'Origin', 
+    'X-Requested-With'
+  ],
+  exposedHeaders: ['Content-Length'],
+  maxAge: 86400, // Cache preflight for 24 hours
+  optionsSuccessStatus: 200
+};
 
+app.use(cors(corsOptions));
 
-app.use(bodyParser.json());
+// ✅ EXPLICIT OPTIONS HANDLER
+app.options('*', cors(corsOptions));
+
+// ✅ REQUEST LOGGING
+app.use((req, res, next) => {
+  console.log(`📍 ${req.method} ${req.path} from ${req.headers.origin || 'no origin'}`);
+  next();
+});
+
+// ✅ BODY PARSER MIDDLEWARE
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+
+// ✅ ADDITIONAL CORS HEADERS (redundant but ensures compatibility)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
 
 
 // ✅ Health check endpoints
@@ -67,14 +115,31 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
     message: 'Career Guidance API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    cors: 'enabled'
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+  res.json({ 
+    status: 'healthy',
+    cors: 'enabled',
+    port: PORT
+  });
 });
 
+// ✅ CORS TEST ENDPOINT
+app.post('/api/test-cors', (req, res) => {
+  console.log('✅ CORS test endpoint hit');
+  res.json({
+    success: true,
+    message: 'CORS is working perfectly!',
+    receivedData: req.body,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ==================== YOUR EXISTING ENDPOINTS BELOW ====================
 // Store OTPs temporarily
 const otpStore = new Map();
 
@@ -86,6 +151,8 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD
   }
 });
+
+// ... (rest of your code continues here - keep everything else the same)
 
 const cloudinary = require('cloudinary').v2;
 
