@@ -1058,7 +1058,7 @@ app.post('/api/generate-career-guidance', async (req, res) => {
 
     const aiGuidance = {
       ...guidanceData,
-      generatedAt: new Date().ISOString(),
+      generatedAt:  new Date().toISOString(),
       modelUsed: usedModel,
       version: '1.0'
     };
