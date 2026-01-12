@@ -1249,8 +1249,7 @@ Portfolio: ${p.hasPortfolio ? 'Yes' : 'No'}
 }
 
 
-
-// ==================== GENERATE QUIZ ENDPOINT ====================
+// ==================== GENERATE QUIZ ENDPOINT - FULLY DYNAMIC AI ====================
 app.post('/api/generate-quiz', async (req, res) => {
   const { email, rounds, questionsPerRound, difficulty } = req.body;
 
@@ -1261,7 +1260,7 @@ app.post('/api/generate-quiz', async (req, res) => {
   try {
     console.log('📝 Generating quiz for:', email, { rounds, questionsPerRound, difficulty });
 
-    // 🔥 LOAD PROFILE (Firebase compatible)
+    // 🔥 LOAD PROFILE
     const sanitizedEmail = email.toLowerCase().trim().replace(/[@.]/g, '_');
     let userProfile = null;
     let source = null;
@@ -1283,7 +1282,7 @@ app.post('/api/generate-quiz', async (req, res) => {
       }
     }
 
-    // Try Firebase Storage
+    // Try Firebase Storage if not found
     if (!userProfile) {
       const storagePaths = [
         `career_profiles/${sanitizedEmail}.json`,
@@ -1308,38 +1307,58 @@ app.post('/api/generate-quiz', async (req, res) => {
     }
 
     if (!userProfile) {
-      return res.status(404).json({ error: 'Profile not found' });
+      return res.status(404).json({ 
+        error: 'Profile not found',
+        message: 'Please complete your profile first before generating quiz.'
+      });
     }
 
-    console.log('✅ Profile loaded successfully');
+    console.log('✅ Profile loaded successfully from:', source);
 
-    // ✅ FIXED: Declare usedModel BEFORE loop
+    // ✅ DECLARE VARIABLES BEFORE LOOP (CRITICAL FIX)
     let result = null;
-    let usedModel = null;  // 🔥 MOVED UP HERE
+    let usedModel = null;
 
-    // Gemini models
+    // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-exp'];
+    
+    // ✅ UPDATED MODEL LIST - Working models as of January 2025
+    const modelsToTry = [
+      'gemini-2.0-flash-exp',       // Latest experimental - high quota
+      'gemini-2.0-flash',           // Stable v2.0
+      'gemini-1.5-flash',           // Fallback v1.5
+      'gemini-1.5-pro'              // Premium fallback
+    ];
 
     const techSkills = userProfile.technicalSkills || [];
     const careerGoal = userProfile.careerInterestArea || 'general career development';
 
-    // Same detailed prompt as original
-    const prompt = `You are an expert career assessment system. Generate a personalized career assessment quiz.
+    // ✅ DYNAMIC AI PROMPT - Personalized to user's profile
+    const prompt = `You are an expert career assessment system. Generate a personalized quiz based on this student's profile.
 
-USER PROFILE:
+**STUDENT PROFILE:**
 Name: ${userProfile.fullName || 'Student'}
-Skills: ${techSkills.join(', ') || 'None listed'}
-Career Interest: ${careerGoal}
 Education: ${userProfile.degree || 'Not specified'} in ${userProfile.department || 'Not specified'}
+Current Year: ${userProfile.currentYear || 'Graduated'}
+Technical Skills: ${techSkills.slice(0, 8).join(', ') || 'None listed'}
+Career Interest: ${careerGoal}
+CGPA: ${userProfile.currentCGPA || 'Not specified'}
 
-QUIZ CONFIGURATION:
+**QUIZ REQUIREMENTS:**
 - Total Rounds: ${rounds}
 - Questions per Round: ${questionsPerRound}
 - Difficulty Level: ${difficulty}
 - Total Questions: ${rounds * questionsPerRound}
 
-**OUTPUT FORMAT (STRICT JSON):**
+**IMPORTANT INSTRUCTIONS:**
+1. Generate questions RELEVANT to their skills and career goal
+2. Mix technical knowledge with problem-solving
+3. Use realistic industry scenarios
+4. Ensure questions test practical understanding
+5. Make difficulty appropriate for ${difficulty} level
+
+**RESPOND WITH ONLY THIS JSON (NO MARKDOWN, NO BACKTICKS):**
+
 {
   "rounds": [
     {
@@ -1352,11 +1371,11 @@ QUIZ CONFIGURATION:
           "options": {
             "A": "To manage component styling",
             "B": "To use state and lifecycle features in functional components",
-            "C": "To handle API requests", 
+            "C": "To handle API requests",
             "D": "To optimize performance only"
           },
           "correctAnswer": "B",
-          "explanation": "React hooks allow functional components to use state and lifecycle features.",
+          "explanation": "React hooks allow functional components to use state and lifecycle features without writing class components.",
           "skillTested": "React",
           "difficulty": "${difficulty}"
         }
@@ -1365,105 +1384,154 @@ QUIZ CONFIGURATION:
   ]
 }
 
-Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSON.`;
+**CRITICAL:** Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSON with no extra text.`;
 
-    // ✅ FIXED: Loop properly declares usedModel
+    // ✅ TRY EACH MODEL IN ORDER
     for (const modelName of modelsToTry) {
       try {
         console.log(`🤖 Trying model: ${modelName}...`);
-        const model = genAI.getGenerativeModel({ model: modelName });
+        
+        const model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8000,
+            topK: 40,
+            topP: 0.95
+          }
+        });
+        
         result = await model.generateContent(prompt);
-        usedModel = modelName;  // ✅ Now accessible outside loop
+        usedModel = modelName;
+        
         console.log(`✅ SUCCESS with ${modelName}`);
         break;
+        
       } catch (error) {
         console.log(`❌ ${modelName} failed:`, error.message);
-        if (error.status === 429) continue;
+        
+        // If rate limited or quota exceeded, try next model
+        if (error.status === 429 || error.message.includes('quota') || error.message.includes('rate limit')) {
+          console.log('   ⏳ Rate limited, trying next model...');
+          continue;
+        }
+        
+        // For other errors, also try next model
+        continue;
       }
     }
 
-    if (!result || !usedModel) {  // ✅ Check both
-      // 🔥 GENERATE MOCK QUIZ INSTEAD OF ERROR
-      console.log('⚠️ All AI models failed. Generating mock quiz...');
+    // ✅ CHECK IF ALL MODELS FAILED
+    if (!result || !usedModel) {
+      console.error('⚠️ ALL AI MODELS FAILED - Generating fallback quiz');
       
+      // 🔥 GENERATE MOCK QUIZ (Only as last resort)
       const mockQuizData = {
-        rounds: [{
-          roundNumber: 1,
-          category: "General Assessment",
-          questions: [
-            {
-              questionId: "r1q1",
-              question: "What is version control used for?",
-              options: {
-                A: "Writing code",
-                B: "Tracking code changes",
-                C: "Compiling programs",
-                D: "Debugging"
-              },
-              correctAnswer: "B",
-              explanation: "Version control tracks and manages code changes.",
-              skillTested: "Version Control",
-              difficulty: difficulty
-            },
-            {
-              questionId: "r1q2",
-              question: "Which data structure uses LIFO?",
-              options: {
-                A: "Queue",
-                B: "Array",
-                C: "Stack",
-                D: "List"
-              },
-              correctAnswer: "C",
-              explanation: "Stack uses Last In First Out.",
-              skillTested: "Data Structures",
-              difficulty: difficulty
-            },
-            {
-              questionId: "r1q3",
-              question: "What is binary search complexity?",
-              options: {
-                A: "O(n)",
-                B: "O(log n)",
-                C: "O(n²)",
-                D: "O(1)"
-              },
-              correctAnswer: "B",
-              explanation: "Binary search is O(log n).",
-              skillTested: "Algorithms",
-              difficulty: difficulty
-            },
-            {
-              questionId: "r1q4",
-              question: "Which is NOT an OOP principle?",
-              options: {
-                A: "Encapsulation",
-                B: "Inheritance",
-                C: "Compilation",
-                D: "Polymorphism"
-              },
-              correctAnswer: "C",
-              explanation: "Compilation is not an OOP principle.",
-              skillTested: "OOP",
-              difficulty: difficulty
-            },
-            {
-              questionId: "r1q5",
-              question: "What is most important in programming?",
-              options: {
-                A: "Memorizing syntax",
-                B: "Problem-solving",
-                C: "Typing speed",
-                D: "Tool knowledge"
-              },
-              correctAnswer: "B",
-              explanation: "Problem-solving is fundamental.",
-              skillTested: "Core Skills",
-              difficulty: difficulty
-            }
-          ]
-        }]
+        rounds: []
       };
+
+      // Generate rounds based on user configuration
+      for (let r = 1; r <= rounds; r++) {
+        const round = {
+          roundNumber: r,
+          category: r === 1 ? "Technical Fundamentals" : r === 2 ? "Problem Solving" : "Advanced Concepts",
+          questions: []
+        };
+
+        // Generate questions for this round
+        for (let q = 1; q <= questionsPerRound; q++) {
+          const questionIndex = (r - 1) * questionsPerRound + q;
+          
+          // Question bank
+          const questionBank = [
+            {
+              question: "What is the primary purpose of version control systems like Git?",
+              options: { A: "Code compilation", B: "Tracking code changes", C: "Running tests", D: "Debugging" },
+              correctAnswer: "B",
+              explanation: "Version control systems track and manage changes to code over time.",
+              skillTested: "Version Control"
+            },
+            {
+              question: "Which data structure uses LIFO (Last In First Out)?",
+              options: { A: "Queue", B: "Array", C: "Stack", D: "Tree" },
+              correctAnswer: "C",
+              explanation: "Stack follows Last In First Out principle - last element added is first removed.",
+              skillTested: "Data Structures"
+            },
+            {
+              question: "What is the time complexity of binary search?",
+              options: { A: "O(n)", B: "O(log n)", C: "O(n²)", D: "O(1)" },
+              correctAnswer: "B",
+              explanation: "Binary search divides the search space in half each iteration, resulting in O(log n).",
+              skillTested: "Algorithms"
+            },
+            {
+              question: "Which is NOT a principle of Object-Oriented Programming?",
+              options: { A: "Encapsulation", B: "Inheritance", C: "Compilation", D: "Polymorphism" },
+              correctAnswer: "C",
+              explanation: "Compilation is a process, not an OOP principle. The four main principles are Encapsulation, Inheritance, Polymorphism, and Abstraction.",
+              skillTested: "OOP"
+            },
+            {
+              question: "What does SQL stand for?",
+              options: { A: "Simple Query Language", B: "Structured Query Language", C: "Standard Query Language", D: "System Query Language" },
+              correctAnswer: "B",
+              explanation: "SQL stands for Structured Query Language, used for managing relational databases.",
+              skillTested: "Databases"
+            },
+            {
+              question: "Which HTTP method is idempotent?",
+              options: { A: "POST", B: "PUT", C: "PATCH", D: "All of these" },
+              correctAnswer: "B",
+              explanation: "PUT is idempotent - making multiple identical PUT requests has the same effect as making one.",
+              skillTested: "Web Development"
+            },
+            {
+              question: "What is the purpose of a foreign key in a database?",
+              options: { A: "Encrypt data", B: "Link tables", C: "Speed up queries", D: "Store passwords" },
+              correctAnswer: "B",
+              explanation: "Foreign keys establish relationships between tables in a relational database.",
+              skillTested: "Databases"
+            },
+            {
+              question: "In programming, what is recursion?",
+              options: { A: "A loop", B: "A function calling itself", C: "Error handling", D: "Memory allocation" },
+              correctAnswer: "B",
+              explanation: "Recursion is when a function calls itself to solve a problem by breaking it into smaller instances.",
+              skillTested: "Programming Concepts"
+            },
+            {
+              question: "What is the main benefit of using a CDN?",
+              options: { A: "Cheaper hosting", B: "Faster content delivery", C: "Better SEO", D: "More storage" },
+              correctAnswer: "B",
+              explanation: "CDN (Content Delivery Network) serves content from servers closer to users, reducing latency.",
+              skillTested: "Web Performance"
+            },
+            {
+              question: "Which design pattern ensures only one instance of a class exists?",
+              options: { A: "Factory", B: "Singleton", C: "Observer", D: "Strategy" },
+              correctAnswer: "B",
+              explanation: "Singleton pattern restricts instantiation of a class to one object.",
+              skillTested: "Design Patterns"
+            }
+          ];
+
+          // Use modulo to cycle through questions
+          const questionTemplate = questionBank[(questionIndex - 1) % questionBank.length];
+          
+          round.questions.push({
+            questionId: `r${r}q${q}`,
+            question: questionTemplate.question,
+            options: questionTemplate.options,
+            correctAnswer: questionTemplate.correctAnswer,
+            explanation: questionTemplate.explanation,
+            skillTested: questionTemplate.skillTested,
+            difficulty: difficulty
+          });
+        }
+
+        mockQuizData.rounds.push(round);
+      }
 
       const quiz = {
         quizId: `quiz_${Date.now()}`,
@@ -1480,25 +1548,55 @@ Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSO
         modelUsed: 'mock-fallback'
       };
 
+      console.log('⚠️ Returning mock quiz (AI unavailable)');
+
       return res.json({
         success: true,
         quiz,
-        modelUsed: 'mock-fallback'
+        modelUsed: 'mock-fallback',
+        warning: 'AI models temporarily unavailable. Using template quiz.'
       });
     }
 
     console.log('✅ Received response from Gemini using:', usedModel);
     
-    // Parse quiz (same as original)
+    // ✅ PARSE AI RESPONSE
     const responseText = result.response.text().trim();
     let cleanedResponse = responseText;
+    
+    // Remove markdown code blocks if present
     if (cleanedResponse.startsWith('```json')) {
-      cleanedResponse = cleanedResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      cleanedResponse = cleanedResponse
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
     }
     
-    const quizData = JSON.parse(cleanedResponse);
+    // ✅ PARSE JSON
+    let quizData;
+    try {
+      quizData = JSON.parse(cleanedResponse);
+    } catch (parseError) {
+      console.error('❌ JSON Parse Error:', parseError.message);
+      console.log('Raw response (first 500 chars):', cleanedResponse.substring(0, 500));
+      
+      return res.status(500).json({ 
+        error: 'Failed to parse AI response',
+        message: 'AI generated invalid JSON. Please try again.',
+        details: parseError.message
+      });
+    }
 
-    // Build complete quiz object (same as original)
+    // ✅ VALIDATE QUIZ STRUCTURE
+    if (!quizData.rounds || !Array.isArray(quizData.rounds) || quizData.rounds.length === 0) {
+      console.error('❌ Invalid quiz data structure');
+      return res.status(500).json({
+        error: 'Invalid quiz data',
+        message: 'AI generated incomplete quiz. Please try again.'
+      });
+    }
+
+    // ✅ BUILD COMPLETE QUIZ OBJECT
     const quiz = {
       quizId: `quiz_${Date.now()}`,
       userEmail: email,
@@ -1511,27 +1609,28 @@ Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSO
       },
       quizData: quizData.rounds,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      modelUsed: usedModel  // ✅ Now defined!
+      modelUsed: usedModel
     };
 
-    console.log('✅ Quiz generated successfully using:', usedModel);
+    console.log(`✅ Quiz generated successfully using: ${usedModel}`);
+    console.log(`   Total questions: ${quiz.configuration.totalQuestions}`);
+    console.log(`   Profile source: ${source}`);
 
     res.json({
       success: true,
       quiz,
-      modelUsed: usedModel  // ✅ SAFE!
+      modelUsed: usedModel
     });
 
   } catch (error) {
     console.error('❌ Quiz generation error:', error);
     res.status(500).json({ 
       error: 'Failed to generate quiz',
-      details: error.message 
+      message: error.message || 'Unknown error occurred',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
-
-
 // ✅ COMPLETE /api/submit-quiz ENDPOINT WITH MODEL FALLBACK
 // Replace your entire app.post('/api/submit-quiz', ...) function with this
 
