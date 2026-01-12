@@ -50,7 +50,7 @@ const corsOptions = {
       'http://127.0.0.1:5173',
       'https://careergudiance-10.onrender.com',
       'https://careerguidance-10.onrender.com',
-      'https://career-guidance-eef4b.web.app/',
+      'https://career-guidance-eef4b.web.app',
       // ✅ ADD YOUR FRONTEND URL HERE IF DEPLOYED
     ];
 
@@ -79,7 +79,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // ✅ EXPLICIT OPTIONS HANDLER
-app.options('*', cors(corsOptions));
+app.options('/*', cors(corsOptions));
 
 // ✅ REQUEST LOGGING
 app.use((req, res, next) => {
