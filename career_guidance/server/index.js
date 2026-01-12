@@ -1383,9 +1383,107 @@ Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSO
     }
 
     if (!result || !usedModel) {  // ✅ Check both
-      return res.status(429).json({
-        error: 'All AI models failed',
-        message: 'Please wait 1-2 minutes and try again'
+      // 🔥 GENERATE MOCK QUIZ INSTEAD OF ERROR
+      console.log('⚠️ All AI models failed. Generating mock quiz...');
+      
+      const mockQuizData = {
+        rounds: [{
+          roundNumber: 1,
+          category: "General Assessment",
+          questions: [
+            {
+              questionId: "r1q1",
+              question: "What is version control used for?",
+              options: {
+                A: "Writing code",
+                B: "Tracking code changes",
+                C: "Compiling programs",
+                D: "Debugging"
+              },
+              correctAnswer: "B",
+              explanation: "Version control tracks and manages code changes.",
+              skillTested: "Version Control",
+              difficulty: difficulty
+            },
+            {
+              questionId: "r1q2",
+              question: "Which data structure uses LIFO?",
+              options: {
+                A: "Queue",
+                B: "Array",
+                C: "Stack",
+                D: "List"
+              },
+              correctAnswer: "C",
+              explanation: "Stack uses Last In First Out.",
+              skillTested: "Data Structures",
+              difficulty: difficulty
+            },
+            {
+              questionId: "r1q3",
+              question: "What is binary search complexity?",
+              options: {
+                A: "O(n)",
+                B: "O(log n)",
+                C: "O(n²)",
+                D: "O(1)"
+              },
+              correctAnswer: "B",
+              explanation: "Binary search is O(log n).",
+              skillTested: "Algorithms",
+              difficulty: difficulty
+            },
+            {
+              questionId: "r1q4",
+              question: "Which is NOT an OOP principle?",
+              options: {
+                A: "Encapsulation",
+                B: "Inheritance",
+                C: "Compilation",
+                D: "Polymorphism"
+              },
+              correctAnswer: "C",
+              explanation: "Compilation is not an OOP principle.",
+              skillTested: "OOP",
+              difficulty: difficulty
+            },
+            {
+              questionId: "r1q5",
+              question: "What is most important in programming?",
+              options: {
+                A: "Memorizing syntax",
+                B: "Problem-solving",
+                C: "Typing speed",
+                D: "Tool knowledge"
+              },
+              correctAnswer: "B",
+              explanation: "Problem-solving is fundamental.",
+              skillTested: "Core Skills",
+              difficulty: difficulty
+            }
+          ]
+        }]
+      };
+
+      const quiz = {
+        quizId: `quiz_${Date.now()}`,
+        userEmail: email,
+        generatedAt: new Date().toISOString(),
+        configuration: {
+          rounds,
+          questionsPerRound,
+          difficulty,
+          totalQuestions: rounds * questionsPerRound
+        },
+        quizData: mockQuizData.rounds,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        modelUsed: 'mock-fallback'
+      };
+
+      return res.json({
+        success: true,
+        quiz,
+        modelUsed: 'mock-fallback'
       });
     }
 
@@ -1432,6 +1530,7 @@ Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSO
     });
   }
 });
+
 
 // ✅ COMPLETE /api/submit-quiz ENDPOINT WITH MODEL FALLBACK
 // Replace your entire app.post('/api/submit-quiz', ...) function with this
