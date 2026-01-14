@@ -101,37 +101,55 @@ function generateOTP() {
 }
 
 
-// ============================================
-// INITIALIZE GOOGLE SHEETS
-// ============================================
- async function initializeGoogleSheets() {
+
+async function initializeGoogleSheets() {
   try {
-    // Option 1: Using JSON file path
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH) {
+    let credentials;
+
+    // ✅ OPTION 1: Use JSON string from env (RECOMMENDED for Render)
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      try {
+        credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        console.log('✅ Parsed Google credentials from GOOGLE_SERVICE_ACCOUNT_JSON');
+      } catch (parseError) {
+        console.error('❌ Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', parseError.message);
+        return;
+      }
+
       const auth = new google.auth.GoogleAuth({
-        keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH,
+        credentials,  // ✅ Use parsed credentials object, NOT keyFile
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
       });
+      
       sheets = google.sheets({ version: 'v4', auth });
       sheetsEnabled = true;
-      console.log('✅ Google Sheets initialized (from file)');
+      console.log('✅ Google Sheets initialized (from env JSON)');
       return;
     }
 
-    // Option 2: Using JSON string from env
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-      const auth = new google.auth.GoogleAuth({
-        credentials,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-      });
-      sheets = google.sheets({ version: 'v4', auth });
-      sheetsEnabled = true;
-      console.log('✅ Google Sheets initialized (from env)');
-      return;
+    // ✅ OPTION 2: Use file path (for local development only)
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH) {
+      const fs = require('fs');
+      
+      // Check if it's a valid file path
+      if (fs.existsSync(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH)) {
+        const auth = new google.auth.GoogleAuth({
+          keyFile: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH,
+          scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+        
+        sheets = google.sheets({ version: 'v4', auth });
+        sheetsEnabled = true;
+        console.log('✅ Google Sheets initialized (from file path)');
+        return;
+      } else {
+        console.warn('⚠️ GOOGLE_SERVICE_ACCOUNT_KEY_PATH does not exist:', process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH);
+      }
     }
 
     console.warn('⚠️ Google Sheets credentials not found - feature disabled');
+    sheetsEnabled = false;
+    
   } catch (error) {
     console.error('❌ Google Sheets initialization failed:', error.message);
     sheetsEnabled = false;
@@ -1248,33 +1266,27 @@ Portfolio: ${p.hasPortfolio ? 'Yes' : 'No'}
 `;
 }
 
+// ============================================
+// FIXED QUIZ GENERATION ENDPOINT
+// ============================================
 
-// ==================== GENERATE QUIZ ENDPOINT - FULLY DYNAMIC AI ====================
 app.post('/api/generate-quiz', async (req, res) => {
   const { email, rounds, questionsPerRound, difficulty } = req.body;
-
-  if (!email || !rounds || !questionsPerRound || !difficulty) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
 
   try {
     console.log('📝 Generating quiz for:', email, { rounds, questionsPerRound, difficulty });
 
-    // 🔥 LOAD PROFILE
+    // Load user profile
     const sanitizedEmail = email.toLowerCase().trim().replace(/[@.]/g, '_');
     let userProfile = null;
-    let source = null;
 
-    // Try Firestore first
     const docIds = [sanitizedEmail, email.toLowerCase().trim()];
     for (const docId of docIds) {
       try {
-        const docRef = db.collection('career_profiles').doc(docId);
-        const docSnap = await docRef.get();
+        const docSnap = await db.collection('career_profiles').doc(docId).get();
         if (docSnap.exists) {
           userProfile = docSnap.data();
-          source = `Firestore: ${docId}`;
-          console.log(`✅ Found profile in ${source}`);
+          console.log('✅ Profile loaded successfully from:', `Firestore: ${docId}`);
           break;
         }
       } catch (err) {
@@ -1282,111 +1294,30 @@ app.post('/api/generate-quiz', async (req, res) => {
       }
     }
 
-    // Try Firebase Storage if not found
-    if (!userProfile) {
-      const storagePaths = [
-        `career_profiles/${sanitizedEmail}.json`,
-        `career_profiles/${email.toLowerCase().trim()}.json`
-      ];
-      
-      for (const path of storagePaths) {
-        try {
-          const file = bucket.file(path);
-          const [exists] = await file.exists();
-          if (exists) {
-            const [contents] = await file.download();
-            userProfile = JSON.parse(contents.toString());
-            source = `Storage: ${path}`;
-            console.log(`✅ Found profile in ${source}`);
-            break;
-          }
-        } catch (err) {
-          continue;
-        }
-      }
-    }
-
     if (!userProfile) {
       return res.status(404).json({ 
-        error: 'Profile not found',
-        message: 'Please complete your profile first before generating quiz.'
+        success: false, 
+        error: 'Profile not found. Please complete your profile first.' 
       });
     }
 
-    console.log('✅ Profile loaded successfully from:', source);
-
-    // ✅ DECLARE VARIABLES BEFORE LOOP (CRITICAL FIX)
-    let result = null;
-    let usedModel = null;
-
-    // Initialize Gemini AI
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    
-    // ✅ UPDATED MODEL LIST - Working models as of January 2025
+    // ✅ UPDATED MODEL LIST - Remove rate-limited models
     const modelsToTry = [
-      'gemini-2.0-flash-exp',       // Latest experimental - high quota
-      'gemini-2.0-flash',           // Stable v2.0
-      'gemini-1.5-flash',           // Fallback v1.5
-      'gemini-1.5-pro'              // Premium fallback
+      'gemini-2.5-flash',           // ✅ PRIMARY - Best balance
+      'gemini-2.5-flash-lite',      // ✅ BACKUP - Lighter version
+      'gemini-3-flash-preview',     // ✅ NEW - Preview model
+      'gemini-flash-latest',        // ✅ FALLBACK - Generic latest
+      'gemini-2.5-pro'              // ✅ LAST RESORT - More powerful but slower
     ];
 
-    const techSkills = userProfile.technicalSkills || [];
-    const careerGoal = userProfile.careerInterestArea || 'general career development';
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    let quizData = null;
+    let usedModel = null;
 
-    // ✅ DYNAMIC AI PROMPT - Personalized to user's profile
-    const prompt = `You are an expert career assessment system. Generate a personalized quiz based on this student's profile.
+    // Build comprehensive prompt
+    const prompt = buildQuizPrompt(userProfile, rounds, questionsPerRound, difficulty);
 
-**STUDENT PROFILE:**
-Name: ${userProfile.fullName || 'Student'}
-Education: ${userProfile.degree || 'Not specified'} in ${userProfile.department || 'Not specified'}
-Current Year: ${userProfile.currentYear || 'Graduated'}
-Technical Skills: ${techSkills.slice(0, 8).join(', ') || 'None listed'}
-Career Interest: ${careerGoal}
-CGPA: ${userProfile.currentCGPA || 'Not specified'}
-
-**QUIZ REQUIREMENTS:**
-- Total Rounds: ${rounds}
-- Questions per Round: ${questionsPerRound}
-- Difficulty Level: ${difficulty}
-- Total Questions: ${rounds * questionsPerRound}
-
-**IMPORTANT INSTRUCTIONS:**
-1. Generate questions RELEVANT to their skills and career goal
-2. Mix technical knowledge with problem-solving
-3. Use realistic industry scenarios
-4. Ensure questions test practical understanding
-5. Make difficulty appropriate for ${difficulty} level
-
-**RESPOND WITH ONLY THIS JSON (NO MARKDOWN, NO BACKTICKS):**
-
-{
-  "rounds": [
-    {
-      "roundNumber": 1,
-      "category": "Technical Skills Assessment",
-      "questions": [
-        {
-          "questionId": "r1q1",
-          "question": "What is the primary purpose of React hooks?",
-          "options": {
-            "A": "To manage component styling",
-            "B": "To use state and lifecycle features in functional components",
-            "C": "To handle API requests",
-            "D": "To optimize performance only"
-          },
-          "correctAnswer": "B",
-          "explanation": "React hooks allow functional components to use state and lifecycle features without writing class components.",
-          "skillTested": "React",
-          "difficulty": "${difficulty}"
-        }
-      ]
-    }
-  ]
-}
-
-**CRITICAL:** Generate EXACTLY ${questionsPerRound} questions per round. Return ONLY valid JSON with no extra text.`;
-
-    // ✅ TRY EACH MODEL IN ORDER
+    // ✅ TRY MODELS WITH DELAY
     for (const modelName of modelsToTry) {
       try {
         console.log(`🤖 Trying model: ${modelName}...`);
@@ -1394,245 +1325,288 @@ CGPA: ${userProfile.currentCGPA || 'Not specified'}
         const model = genAI.getGenerativeModel({ 
           model: modelName,
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 8000,
+            temperature: 0.8,
             topK: 40,
-            topP: 0.95
+            topP: 0.95,
+            maxOutputTokens: 8192
           }
         });
+
+        const result = await model.generateContent(prompt);
+        let responseText = result.response.text();
         
-        result = await model.generateContent(prompt);
-        usedModel = modelName;
+        // Clean response
+        responseText = responseText
+          .replace(/```json\s*/g, '')
+          .replace(/```\s*/g, '')
+          .trim();
+
+        console.log(`✅ ${modelName} response received (${responseText.length} chars)`);
         
-        console.log(`✅ SUCCESS with ${modelName}`);
-        break;
+        // Parse JSON
+        quizData = JSON.parse(responseText);
+        
+        // Validate structure
+        if (quizData && Array.isArray(quizData) && quizData.length > 0) {
+          usedModel = modelName;
+          console.log(`✅ Quiz generated successfully with ${modelName}`);
+          break;
+        } else {
+          console.log(`⚠️ ${modelName} returned invalid structure`);
+          continue;
+        }
         
       } catch (error) {
         console.log(`❌ ${modelName} failed:`, error.message);
         
-        // If rate limited or quota exceeded, try next model
-        if (error.status === 429 || error.message.includes('quota') || error.message.includes('rate limit')) {
-          console.log('   ⏳ Rate limited, trying next model...');
-          continue;
+        // ✅ ADD DELAY BETWEEN RETRIES TO AVOID RATE LIMITS
+        if (modelsToTry.indexOf(modelName) < modelsToTry.length - 1) {
+          console.log('   ⏳ Waiting 2 seconds before next model...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
-        
-        // For other errors, also try next model
         continue;
       }
     }
 
-    // ✅ CHECK IF ALL MODELS FAILED
-    if (!result || !usedModel) {
-      console.error('⚠️ ALL AI MODELS FAILED - Generating fallback quiz');
-      
-      // 🔥 GENERATE MOCK QUIZ (Only as last resort)
-      const mockQuizData = {
-        rounds: []
-      };
-
-      // Generate rounds based on user configuration
-      for (let r = 1; r <= rounds; r++) {
-        const round = {
-          roundNumber: r,
-          category: r === 1 ? "Technical Fundamentals" : r === 2 ? "Problem Solving" : "Advanced Concepts",
-          questions: []
-        };
-
-        // Generate questions for this round
-        for (let q = 1; q <= questionsPerRound; q++) {
-          const questionIndex = (r - 1) * questionsPerRound + q;
-          
-          // Question bank
-          const questionBank = [
-            {
-              question: "What is the primary purpose of version control systems like Git?",
-              options: { A: "Code compilation", B: "Tracking code changes", C: "Running tests", D: "Debugging" },
-              correctAnswer: "B",
-              explanation: "Version control systems track and manage changes to code over time.",
-              skillTested: "Version Control"
-            },
-            {
-              question: "Which data structure uses LIFO (Last In First Out)?",
-              options: { A: "Queue", B: "Array", C: "Stack", D: "Tree" },
-              correctAnswer: "C",
-              explanation: "Stack follows Last In First Out principle - last element added is first removed.",
-              skillTested: "Data Structures"
-            },
-            {
-              question: "What is the time complexity of binary search?",
-              options: { A: "O(n)", B: "O(log n)", C: "O(n²)", D: "O(1)" },
-              correctAnswer: "B",
-              explanation: "Binary search divides the search space in half each iteration, resulting in O(log n).",
-              skillTested: "Algorithms"
-            },
-            {
-              question: "Which is NOT a principle of Object-Oriented Programming?",
-              options: { A: "Encapsulation", B: "Inheritance", C: "Compilation", D: "Polymorphism" },
-              correctAnswer: "C",
-              explanation: "Compilation is a process, not an OOP principle. The four main principles are Encapsulation, Inheritance, Polymorphism, and Abstraction.",
-              skillTested: "OOP"
-            },
-            {
-              question: "What does SQL stand for?",
-              options: { A: "Simple Query Language", B: "Structured Query Language", C: "Standard Query Language", D: "System Query Language" },
-              correctAnswer: "B",
-              explanation: "SQL stands for Structured Query Language, used for managing relational databases.",
-              skillTested: "Databases"
-            },
-            {
-              question: "Which HTTP method is idempotent?",
-              options: { A: "POST", B: "PUT", C: "PATCH", D: "All of these" },
-              correctAnswer: "B",
-              explanation: "PUT is idempotent - making multiple identical PUT requests has the same effect as making one.",
-              skillTested: "Web Development"
-            },
-            {
-              question: "What is the purpose of a foreign key in a database?",
-              options: { A: "Encrypt data", B: "Link tables", C: "Speed up queries", D: "Store passwords" },
-              correctAnswer: "B",
-              explanation: "Foreign keys establish relationships between tables in a relational database.",
-              skillTested: "Databases"
-            },
-            {
-              question: "In programming, what is recursion?",
-              options: { A: "A loop", B: "A function calling itself", C: "Error handling", D: "Memory allocation" },
-              correctAnswer: "B",
-              explanation: "Recursion is when a function calls itself to solve a problem by breaking it into smaller instances.",
-              skillTested: "Programming Concepts"
-            },
-            {
-              question: "What is the main benefit of using a CDN?",
-              options: { A: "Cheaper hosting", B: "Faster content delivery", C: "Better SEO", D: "More storage" },
-              correctAnswer: "B",
-              explanation: "CDN (Content Delivery Network) serves content from servers closer to users, reducing latency.",
-              skillTested: "Web Performance"
-            },
-            {
-              question: "Which design pattern ensures only one instance of a class exists?",
-              options: { A: "Factory", B: "Singleton", C: "Observer", D: "Strategy" },
-              correctAnswer: "B",
-              explanation: "Singleton pattern restricts instantiation of a class to one object.",
-              skillTested: "Design Patterns"
-            }
-          ];
-
-          // Use modulo to cycle through questions
-          const questionTemplate = questionBank[(questionIndex - 1) % questionBank.length];
-          
-          round.questions.push({
-            questionId: `r${r}q${q}`,
-            question: questionTemplate.question,
-            options: questionTemplate.options,
-            correctAnswer: questionTemplate.correctAnswer,
-            explanation: questionTemplate.explanation,
-            skillTested: questionTemplate.skillTested,
-            difficulty: difficulty
-          });
-        }
-
-        mockQuizData.rounds.push(round);
-      }
-
-      const quiz = {
-        quizId: `quiz_${Date.now()}`,
-        userEmail: email,
-        generatedAt: new Date().toISOString(),
-        configuration: {
-          rounds,
-          questionsPerRound,
-          difficulty,
-          totalQuestions: rounds * questionsPerRound
-        },
-        quizData: mockQuizData.rounds,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        modelUsed: 'mock-fallback'
-      };
-
-      console.log('⚠️ Returning mock quiz (AI unavailable)');
-
-      return res.json({
-        success: true,
-        quiz,
-        modelUsed: 'mock-fallback',
-        warning: 'AI models temporarily unavailable. Using template quiz.'
-      });
+    // ✅ IMPROVED FALLBACK QUIZ
+    if (!quizData) {
+      console.log('⚠️ ALL AI MODELS FAILED - Generating enhanced fallback quiz');
+      quizData = generateEnhancedFallbackQuiz(userProfile, rounds, questionsPerRound, difficulty);
+      usedModel = 'mock-fallback';
     }
 
-    console.log('✅ Received response from Gemini using:', usedModel);
-    
-    // ✅ PARSE AI RESPONSE
-    const responseText = result.response.text().trim();
-    let cleanedResponse = responseText;
-    
-    // Remove markdown code blocks if present
-    if (cleanedResponse.startsWith('```json')) {
-      cleanedResponse = cleanedResponse
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-    }
-    
-    // ✅ PARSE JSON
-    let quizData;
-    try {
-      quizData = JSON.parse(cleanedResponse);
-    } catch (parseError) {
-      console.error('❌ JSON Parse Error:', parseError.message);
-      console.log('Raw response (first 500 chars):', cleanedResponse.substring(0, 500));
-      
-      return res.status(500).json({ 
-        error: 'Failed to parse AI response',
-        message: 'AI generated invalid JSON. Please try again.',
-        details: parseError.message
-      });
-    }
-
-    // ✅ VALIDATE QUIZ STRUCTURE
-    if (!quizData.rounds || !Array.isArray(quizData.rounds) || quizData.rounds.length === 0) {
-      console.error('❌ Invalid quiz data structure');
-      return res.status(500).json({
-        error: 'Invalid quiz data',
-        message: 'AI generated incomplete quiz. Please try again.'
-      });
-    }
-
-    // ✅ BUILD COMPLETE QUIZ OBJECT
+    // Build response
     const quiz = {
-      quizId: `quiz_${Date.now()}`,
-      userEmail: email,
-      generatedAt: new Date().toISOString(),
+      quizId: `quiz_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       configuration: {
         rounds,
         questionsPerRound,
         difficulty,
         totalQuestions: rounds * questionsPerRound
       },
-      quizData: quizData.rounds,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      quizData,
+      generatedAt: new Date().toISOString(),
       modelUsed: usedModel
     };
-
-    console.log(`✅ Quiz generated successfully using: ${usedModel}`);
-    console.log(`   Total questions: ${quiz.configuration.totalQuestions}`);
-    console.log(`   Profile source: ${source}`);
 
     res.json({
       success: true,
       quiz,
-      modelUsed: usedModel
+      modelUsed: usedModel,
+      message: usedModel === 'mock-fallback' 
+        ? '⚠️ Using fallback quiz (AI temporarily unavailable)' 
+        : '✅ Quiz generated successfully'
     });
 
   } catch (error) {
     console.error('❌ Quiz generation error:', error);
     res.status(500).json({ 
-      error: 'Failed to generate quiz',
-      message: error.message || 'Unknown error occurred',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      success: false, 
+      error: 'Failed to generate quiz', 
+      message: error.message 
     });
   }
 });
+
+// ============================================
+// ENHANCED FALLBACK QUIZ GENERATOR
+// ============================================
+function generateEnhancedFallbackQuiz(profile, rounds, questionsPerRound, difficulty) {
+  const categories = [
+    'Technical Skills',
+    'Problem Solving',
+    'Data Structures',
+    'Web Development',
+    'Career Planning'
+  ];
+
+  const questionBank = {
+    technical: [
+      {
+        question: "What is the time complexity of binary search?",
+        options: { A: "O(n)", B: "O(log n)", C: "O(n²)", D: "O(1)" },
+        correctAnswer: "B",
+        explanation: "Binary search divides the search space in half each iteration, resulting in O(log n) time complexity.",
+        skillTested: "Algorithms"
+      },
+      {
+        question: "Which data structure uses LIFO principle?",
+        options: { A: "Queue", B: "Stack", C: "Array", D: "Tree" },
+        correctAnswer: "B",
+        explanation: "Stack follows Last In First Out (LIFO) - the last element added is the first one removed.",
+        skillTested: "Data Structures"
+      },
+      {
+        question: "What does HTTP stand for?",
+        options: { A: "HyperText Transfer Protocol", B: "High Transfer Protocol", C: "HyperText Transmission Process", D: "High Tech Transfer Protocol" },
+        correctAnswer: "A",
+        explanation: "HTTP stands for HyperText Transfer Protocol, the foundation of data communication on the web.",
+        skillTested: "Web Development"
+      },
+      {
+        question: "Which is NOT a JavaScript framework?",
+        options: { A: "React", B: "Angular", C: "Vue", D: "Django" },
+        correctAnswer: "D",
+        explanation: "Django is a Python web framework. React, Angular, and Vue are JavaScript frameworks.",
+        skillTested: "Web Development"
+      },
+      {
+        question: "What is the purpose of Git?",
+        options: { A: "Database Management", B: "Version Control", C: "Testing", D: "Deployment" },
+        correctAnswer: "B",
+        explanation: "Git is a distributed version control system for tracking changes in source code.",
+        skillTested: "DevOps"
+      }
+    ],
+    problemSolving: [
+      {
+        question: "How would you approach debugging a program that crashes randomly?",
+        options: { 
+          A: "Add logging statements", 
+          B: "Ignore it", 
+          C: "Rewrite everything", 
+          D: "Hope it fixes itself" 
+        },
+        correctAnswer: "A",
+        explanation: "Adding logging helps identify where and why the crash occurs.",
+        skillTested: "Problem Solving"
+      },
+      {
+        question: "What's the first step in solving a coding problem?",
+        options: { 
+          A: "Start coding immediately", 
+          B: "Understand the requirements", 
+          C: "Copy from Stack Overflow", 
+          D: "Ask someone else to do it" 
+        },
+        correctAnswer: "B",
+        explanation: "Understanding requirements ensures you solve the right problem.",
+        skillTested: "Problem Solving"
+      }
+    ],
+    career: [
+      {
+        question: "What's most important for career growth?",
+        options: { 
+          A: "Continuous learning", 
+          B: "Staying in comfort zone", 
+          C: "Avoiding challenges", 
+          D: "Waiting for promotions" 
+        },
+        correctAnswer: "A",
+        explanation: "Continuous learning keeps you relevant and opens new opportunities.",
+        skillTested: "Career Development"
+      },
+      {
+        question: "How should you prepare for technical interviews?",
+        options: { 
+          A: "Practice coding problems", 
+          B: "Memorize answers", 
+          C: "Wing it", 
+          D: "Hope for easy questions" 
+        },
+        correctAnswer: "A",
+        explanation: "Regular practice with coding problems builds problem-solving skills.",
+        skillTested: "Interview Preparation"
+      }
+    ]
+  };
+
+  const quizRounds = [];
+  
+  for (let r = 0; r < rounds; r++) {
+    const category = categories[r % categories.length];
+    const questions = [];
+    
+    // Select questions based on category
+    let pool = [...questionBank.technical, ...questionBank.problemSolving, ...questionBank.career];
+    
+    for (let q = 0; q < questionsPerRound; q++) {
+      const randomIndex = Math.floor(Math.random() * pool.length);
+      const selectedQuestion = pool[randomIndex];
+      
+      questions.push({
+        questionId: `q${r}_${q}`,
+        ...selectedQuestion
+      });
+      
+      // Remove used question
+      pool.splice(randomIndex, 1);
+      if (pool.length === 0) {
+        pool = [...questionBank.technical, ...questionBank.problemSolving, ...questionBank.career];
+      }
+    }
+    
+    quizRounds.push({
+      roundNumber: r + 1,
+      category,
+      questions
+    });
+  }
+  
+  return quizRounds;
+}
+
+// ============================================
+// QUIZ PROMPT BUILDER
+// ============================================
+function buildQuizPrompt(profile, rounds, questionsPerRound, difficulty) {
+  return `Generate a personalized career assessment quiz.
+
+**STUDENT PROFILE:**
+- Education: ${profile.degree} in ${profile.department}
+- Career Interest: ${profile.careerInterestArea}
+- Skills: ${(profile.technicalSkills || []).slice(0, 10).join(', ')}
+- Current Year: ${profile.currentYear || 'Graduated'}
+
+**QUIZ CONFIGURATION:**
+- Rounds: ${rounds}
+- Questions per round: ${questionsPerRound}
+- Difficulty: ${difficulty}
+- Total questions: ${rounds * questionsPerRound}
+
+**RETURN ONLY THIS JSON ARRAY (no markdown, no explanations):**
+
+[
+  {
+    "roundNumber": 1,
+    "category": "Category Name",
+    "questions": [
+      {
+        "questionId": "q1_1",
+        "question": "Question text here?",
+        "options": {
+          "A": "Option A",
+          "B": "Option B",
+          "C": "Option C",
+          "D": "Option D"
+        },
+        "correctAnswer": "B",
+        "explanation": "Why B is correct",
+        "skillTested": "Specific Skill"
+      }
+    ]
+  }
+]
+
+**REQUIREMENTS:**
+- Questions must be relevant to ${profile.careerInterestArea}
+- Difficulty: ${difficulty}
+- Include technical, problem-solving, and career planning questions
+- Each question must have exactly 4 options (A, B, C, D)
+- Provide clear explanations
+- Test skills: ${(profile.technicalSkills || []).slice(0, 5).join(', ')}`;
+}
+
+
 // ✅ COMPLETE /api/submit-quiz ENDPOINT WITH MODEL FALLBACK
 // Replace your entire app.post('/api/submit-quiz', ...) function with this
+
+
+
+// ============================================
+// OPTIMIZED QUIZ SUBMISSION
+// ============================================
 
 app.post('/api/submit-quiz', async (req, res) => {
   const { email, quizId, answers, timeTaken, configuration } = req.body;
@@ -1644,7 +1618,7 @@ app.post('/api/submit-quiz', async (req, res) => {
   try {
     console.log('📊 Submitting quiz for:', email);
 
-    // Load profile
+    // ✅ 1. Load profile quickly
     const sanitizedEmail = email.toLowerCase().trim().replace(/[@.]/g, '_');
     let userProfile = null;
 
@@ -1656,14 +1630,16 @@ app.post('/api/submit-quiz', async (req, res) => {
           userProfile = docSnap.data();
           break;
         }
-      } catch (err) {}
+      } catch (err) {
+        continue;
+      }
     }
 
     if (!userProfile) {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
-    // Calculate scores
+    // ✅ 2. Calculate scores (fast)
     let totalCorrect = 0, totalQuestions = 0;
     const roundResults = [];
     const skillPerformance = {};
@@ -1699,287 +1675,54 @@ app.post('/api/submit-quiz', async (req, res) => {
 
     const overallPercentage = Math.round((totalCorrect / totalQuestions) * 100);
 
-    // Get quiz number
+    // ✅ 3. Get quiz number
     const quizResultsRef = db.collection('quiz_results').doc(sanitizedEmail);
     const quizDoc = await quizResultsRef.get();
     const existingData = quizDoc.exists ? quizDoc.data() : { quizHistory: [], quizCount: 0 };
     const quizNumber = existingData.quizCount + 1;
 
-    // ✅ GEMINI MODELS TO TRY (IN ORDER OF PREFERENCE)
-    const modelsToTry = [
-      { name: 'gemini-2.5-flash', maxTokens: 32768 },
-      { name: 'gemini-flash-latest', maxTokens: 32768 },
-      { name: 'gemini-2.5-pro', maxTokens: 32768 },
-      { name: 'gemini-2.0-flash', maxTokens: 8192 },
-      { name: 'gemini-pro-latest', maxTokens: 32768 }
-    ];
-
-    // ✅ COMPREHENSIVE ANALYSIS GENERATION WITH FALLBACK
+    // ✅ 4. FAST AI ANALYSIS - Single model attempt only
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    
-    const comprehensivePrompt = `You are an expert career counselor. Analyze this quiz performance and generate a COMPLETE career development plan.
-
-**STUDENT PROFILE:**
-Name: ${userProfile.fullName}
-Education: ${userProfile.degree} in ${userProfile.department}
-Current Year: ${userProfile.currentYear || 'Graduated'}
-Career Interest: ${userProfile.careerInterestArea}
-Skills: ${(userProfile.technicalSkills || []).slice(0, 8).join(', ')}
-
-**QUIZ PERFORMANCE:**
-Score: ${totalCorrect}/${totalQuestions} (${overallPercentage}%)
-Time Taken: ${Math.round(timeTaken/1000)} seconds
-Skill Performance: ${Object.entries(skillPerformance).map(([skill, perf]) => 
-  `${skill}: ${perf.correct}/${perf.total}`
-).join(', ')}
-
-**CRITICAL: Return ONLY valid JSON in this EXACT format. No markdown, no explanations, no code blocks:**
-
-{
-  "careerReadiness": ${overallPercentage},
-  "percentile": ${Math.min(95, Math.round(overallPercentage * 0.9))},
-  "strengthAreas": ["List 3 specific skills from quiz"],
-  "weaknessAreas": ["List 3 specific weak areas"],
-  "primaryCareer": {
-    "role": "Best job role for student",
-    "matchPercentage": ${Math.min(95, overallPercentage + 15)},
-    "whyGoodFit": "2-3 sentences why good fit",
-    "averageSalary": "₹X-Y LPA",
-    "topCompanies": ["Company1", "Company2", "Company3"]
-  },
-  "secondaryCareer": {
-    "role": "Alternative role",
-    "matchPercentage": ${Math.max(60, overallPercentage - 5)},
-    "whyGoodFit": "Brief explanation",
-    "averageSalary": "₹X-Y LPA"
-  },
-  "learningRoadmap": {
-    "immediate": {
-      "title": "Week 1-2: Foundation",
-      "tasks": ["Task1", "Task2", "Task3"],
-      "estimatedHours": 20
-    },
-    "shortTerm": {
-      "title": "Month 1-2: Core Skills",
-      "tasks": ["Task1", "Task2", "Task3"],
-      "estimatedHours": 80
-    },
-    "longTerm": {
-      "title": "Month 3-6: Advanced",
-      "tasks": ["Task1", "Task2"],
-      "estimatedHours": 150
-    }
-  },
-  "documentationResources": [
-    {
-      "name": "Resource name",
-      "url": "https://example.com",
-      "category": "Category",
-      "priority": "High"
-    }
-  ],
-  "youtubeResources": [
-    {
-      "channel": "Channel",
-      "topic": "Topic",
-      "url": "https://youtube.com/...",
-      "duration": "10h",
-      "difficulty": "Beginner"
-    }
-  ],
-  "practicePlatforms": [
-    {
-      "name": "LeetCode",
-      "url": "https://leetcode.com",
-      "focus": "DSA",
-      "difficulty": "All",
-      "recommendation": "Start with Easy"
-    }
-  ],
-  "projectSuggestions": [
-    {
-      "title": "Project name",
-      "description": "What to build",
-      "skills": ["Skill1", "Skill2"],
-      "difficulty": "Beginner",
-      "estimatedTime": "1 week",
-      "keyFeatures": ["Feature1", "Feature2"]
-    }
-  ],
-  "certifications": [
-    {
-      "name": "Cert name",
-      "provider": "Provider",
-      "cost": "Cost",
-      "duration": "Time",
-      "priority": "High",
-      "whyUseful": "Why useful"
-    }
-  ],
-  "jobRoleMapping": {
-    "currentLevel": "Entry Level",
-    "readyFor": ["Role1", "Role2"],
-    "needsWork": ["Gap1"],
-    "salaryRange": "₹X-Y LPA",
-    "jobBoards": ["Naukri", "LinkedIn"]
-  },
-  "recommendations": [
-    "Action 1",
-    "Action 2",
-    "Action 3"
-  ]
-}`;
-
-    // Default fallback data
-    let comprehensiveAnalysis = {
-      careerReadiness: overallPercentage,
-      percentile: Math.min(95, Math.round(overallPercentage * 0.9)),
-      strengthAreas: ['Problem Solving', 'Quick Learning', 'Attention to Detail'],
-      weaknessAreas: ['Advanced Concepts', 'Practical Application', 'Time Management'],
-      primaryCareer: {
-        role: userProfile.careerInterestArea || 'Software Developer',
-        matchPercentage: Math.min(95, overallPercentage + 15),
-        whyGoodFit: 'Based on your educational background and technical skills, this role aligns well with your career interests and current skill level.',
-        averageSalary: '₹4-8 LPA',
-        topCompanies: ['TCS', 'Infosys', 'Wipro']
-      },
-      secondaryCareer: {
-        role: 'Full-Stack Developer',
-        matchPercentage: Math.max(60, overallPercentage - 5),
-        whyGoodFit: 'Alternative career path that leverages your technical foundation with opportunities for growth.',
-        averageSalary: '₹5-10 LPA'
-      },
-      learningRoadmap: {
-        immediate: {
-          title: 'Week 1-2: Foundation Building',
-          tasks: ['Review core programming concepts', 'Practice coding daily for 1-2 hours', 'Complete beginner-level tutorials'],
-          estimatedHours: 20
-        },
-        shortTerm: {
-          title: 'Month 1-2: Core Skill Development',
-          tasks: ['Complete a structured online course', 'Build 2-3 mini projects', 'Join online coding communities'],
-          estimatedHours: 80
-        },
-        longTerm: {
-          title: 'Month 3-6: Advanced Skills & Job Readiness',
-          tasks: ['Build a comprehensive portfolio project', 'Contribute to open source', 'Prepare for technical interviews'],
-          estimatedHours: 150
-        }
-      },
-      documentationResources: [
-        { name: 'MDN Web Docs', url: 'https://developer.mozilla.org', category: 'Web Development', priority: 'High' },
-        { name: 'W3Schools', url: 'https://w3schools.com', category: 'Web Basics', priority: 'Medium' }
-      ],
-      youtubeResources: [
-        { channel: 'freeCodeCamp', topic: 'Full Stack Course', url: 'https://youtube.com/@freecodecamp', duration: '10 hours', difficulty: 'Beginner' },
-        { channel: 'Traversy Media', topic: 'Web Development', url: 'https://youtube.com/@TraversyMedia', duration: '5 hours', difficulty: 'Beginner' }
-      ],
-      practicePlatforms: [
-        { name: 'LeetCode', url: 'https://leetcode.com', focus: 'DSA & Problem Solving', difficulty: 'All Levels', recommendation: 'Start with Easy problems, solve 2-3 daily' },
-        { name: 'HackerRank', url: 'https://hackerrank.com', focus: 'Coding Practice', difficulty: 'Beginner to Advanced', recommendation: 'Complete tutorials then challenges' }
-      ],
-      projectSuggestions: [
-        {
-          title: 'Personal Portfolio Website',
-          description: 'Build a responsive portfolio to showcase your projects and skills',
-          skills: ['HTML', 'CSS', 'JavaScript'],
-          difficulty: 'Beginner',
-          estimatedTime: '1 week',
-          keyFeatures: ['Responsive design', 'Project showcase', 'Contact form']
-        },
-        {
-          title: 'Todo Application',
-          description: 'Create a full-stack todo app with CRUD operations',
-          skills: ['React', 'Node.js', 'MongoDB'],
-          difficulty: 'Intermediate',
-          estimatedTime: '2 weeks',
-          keyFeatures: ['User authentication', 'Database integration', 'RESTful API']
-        }
-      ],
-      certifications: [
-        {
-          name: 'Google IT Support Certificate',
-          provider: 'Google (Coursera)',
-          cost: 'Free (with financial aid)',
-          duration: '3-6 months',
-          priority: 'Medium',
-          whyUseful: 'Industry-recognized certification that builds foundational IT skills'
-        },
-        {
-          name: 'AWS Cloud Practitioner',
-          provider: 'Amazon Web Services',
-          cost: '$100',
-          duration: '1-2 months prep',
-          priority: 'High',
-          whyUseful: 'Entry-level cloud certification highly valued by employers'
-        }
-      ],
-      jobRoleMapping: {
-        currentLevel: 'Entry Level',
-        readyFor: ['Junior Developer', 'Software Engineer Intern', 'Frontend Developer'],
-        needsWork: ['Build portfolio projects', 'Gain practical experience', 'Improve problem-solving skills'],
-        salaryRange: '₹3-6 LPA',
-        jobBoards: ['Naukri.com', 'LinkedIn', 'Internshala', 'AngelList']
-      },
-      recommendations: [
-        'Build 2-3 portfolio projects showcasing your best work',
-        'Practice DSA problems daily on LeetCode/HackerRank',
-        'Network actively on LinkedIn and attend tech meetups',
-        'Contribute to open-source projects on GitHub'
-      ]
-    };
-
-    // ✅ TRY EACH MODEL UNTIL ONE WORKS
+    let comprehensiveAnalysis = getDefaultAnalysis(overallPercentage, skillPerformance, userProfile);
     let aiSuccess = false;
-    let lastError = null;
 
-    for (const modelConfig of modelsToTry) {
-      try {
-        console.log(`🤖 Trying model: ${modelConfig.name}...`);
-        
-        const model = genAI.getGenerativeModel({ 
-          model: modelConfig.name,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: modelConfig.maxTokens
-          }
-        });
-
-        const result = await model.generateContent(comprehensivePrompt);
-        let text = result.response.text().trim();
-        
-        // Remove markdown code blocks
-        text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        
-        console.log(`✅ ${modelConfig.name} response received (${text.length} chars)`);
-        console.log('📄 First 300 chars:', text.substring(0, 300));
-        
-        // Try to parse
-        const parsed = JSON.parse(text);
-        
-        // Validate structure
-        if (parsed.primaryCareer && parsed.secondaryCareer && parsed.learningRoadmap) {
-          comprehensiveAnalysis = { ...comprehensiveAnalysis, ...parsed };
-          console.log(`✅ Successfully generated analysis with ${modelConfig.name}`);
-          aiSuccess = true;
-          break;
-        } else {
-          console.log(`⚠️ ${modelConfig.name} response missing required fields`);
-          lastError = 'Missing required fields in response';
+    try {
+      console.log('🤖 Generating AI analysis (timeout: 10s)...');
+      
+      // ✅ USE ONLY THE FASTEST MODEL
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-2.5-flash', // Fastest model
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 4096 // Reduced for speed
         }
-      } catch (err) {
-        console.log(`❌ ${modelConfig.name} failed:`, err.message);
-        lastError = err.message;
-        continue; // Try next model
+      });
+
+      const prompt = buildFastAnalysisPrompt(userProfile, overallPercentage, skillPerformance, totalCorrect, totalQuestions);
+      
+      // ✅ ADD TIMEOUT
+      const analysisPromise = model.generateContent(prompt);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('AI timeout')), 10000) // 10 second timeout
+      );
+
+      const result = await Promise.race([analysisPromise, timeoutPromise]);
+      let aiText = result.response.text().trim();
+      aiText = aiText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      
+      const parsed = JSON.parse(aiText);
+      
+      if (parsed.primaryCareer && parsed.learningRoadmap) {
+        comprehensiveAnalysis = { ...comprehensiveAnalysis, ...parsed };
+        aiSuccess = true;
+        console.log('✅ AI analysis completed');
       }
+    } catch (error) {
+      console.log('⚠️ AI analysis failed/timeout:', error.message);
+      console.log('Using default analysis');
     }
 
-    if (!aiSuccess) {
-      console.log('⚠️ All models failed, using comprehensive fallback data');
-      console.log('Last error:', lastError);
-    }
-
-    // Build result
+    // ✅ 5. Build quiz result
     const newQuizResult = {
       quizId,
       quizNumber,
@@ -1992,7 +1735,7 @@ Skill Performance: ${Object.entries(skillPerformance).map(([skill, perf]) =>
       aiGenerated: aiSuccess
     };
 
-    // Save to Firestore
+    // ✅ 6. Save to Firestore FIRST (fast)
     const updatedData = {
       userEmail: email,
       quizCount: quizNumber,
@@ -2007,50 +1750,12 @@ Skill Performance: ${Object.entries(skillPerformance).map(([skill, perf]) =>
     };
 
     await quizResultsRef.set(updatedData);
+    console.log('✅ Saved to Firestore');
 
-    
-// 🔥 ADD GOOGLE SHEETS RIGHT HERE 👇
- // ============================================
-    // ✅ 7. SAVE TO GOOGLE SHEETS (SIMPLIFIED CALL)
-    // ============================================
-    try {
-      const sheetsSaved = await saveQuizToGoogleSheets({
-        userProfile,
-        email,
-        quizNumber,
-        timestamp: newQuizResult.timestamp,
-        overallScore: newQuizResult.overallScore,
-        comprehensiveAnalysis: newQuizResult.comprehensiveAnalysis,
-        rounds: newQuizResult.rounds,
-        skillPerformance: newQuizResult.skillPerformance
-      });
-
-      if (sheetsSaved) {
-        console.log(`✅ Quiz #${quizNumber} → Google Sheets SUCCESS`);
-      } else {
-        console.log('⚠️ Google Sheets save skipped (disabled or failed)');
-      }
-    } catch (sheetError) {
-      console.error('❌ Google Sheets error:', sheetError.message);
-      // Don't fail the request - data is already in Firestore
-    }
-
-
-    // ✅ SEND EMAIL
-    const mailOptions = {
-      from: process.env.EMAIL,
-      to: email,
-      subject: `🎉 Your Complete Career Development Plan - Quiz #${quizNumber}`,
-      html: generateComprehensiveEmailHTML(userProfile, overallPercentage, totalCorrect, totalQuestions, quizNumber, comprehensiveAnalysis, timeTaken)
-    };
-
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent for Quiz #${quizNumber}`);
-
-    // ✅ RETURN RESPONSE
+    // ✅ 7. RETURN RESPONSE IMMEDIATELY (Don't wait for email/sheets)
     res.json({
       success: true,
-      message: `Quiz #${quizNumber} submitted! Check your email for complete career plan.`,
+      message: `Quiz #${quizNumber} submitted! Processing results...`,
       results: {
         quizNumber,
         overallScore: newQuizResult.overallScore,
@@ -2061,12 +1766,160 @@ Skill Performance: ${Object.entries(skillPerformance).map(([skill, perf]) =>
       }
     });
 
+    // ✅ 8. PROCESS SLOW OPERATIONS IN BACKGROUND (after response sent)
+    console.log('📧 Processing email and sheets in background...');
+    
+    // Email sending (async, don't await)
+    sendQuizEmail(email, userProfile, newQuizResult, quizNumber, overallPercentage, totalCorrect, totalQuestions, timeTaken)
+      .then(() => console.log('✅ Email sent'))
+      .catch(err => console.error('❌ Email failed:', err.message));
+
+    // Google Sheets (async, don't await)
+    if (sheetsEnabled) {
+      saveQuizToGoogleSheets({
+        userProfile,
+        email,
+        quizNumber,
+        timestamp: newQuizResult.timestamp,
+        overallScore: newQuizResult.overallScore,
+        comprehensiveAnalysis: newQuizResult.comprehensiveAnalysis,
+        rounds: newQuizResult.rounds,
+        skillPerformance: newQuizResult.skillPerformance
+      })
+        .then(() => console.log('✅ Saved to Google Sheets'))
+        .catch(err => console.error('❌ Sheets failed:', err.message));
+    }
+
   } catch (error) {
     console.error('❌ Quiz submission error:', error);
     res.status(500).json({ error: 'Failed to submit quiz', message: error.message });
   }
 });
 
+// ============================================
+// FAST ANALYSIS PROMPT (Simplified)
+// ============================================
+function buildFastAnalysisPrompt(profile, percentage, skillPerf, correct, total) {
+  return `Quick career analysis for quiz result.
+
+**PROFILE:** ${profile.degree} in ${profile.department}
+**SCORE:** ${correct}/${total} (${percentage}%)
+**SKILLS:** ${Object.entries(skillPerf).map(([s, p]) => `${s}: ${p.correct}/${p.total}`).join(', ')}
+
+Return ONLY JSON:
+
+{
+  "careerReadiness": ${percentage},
+  "percentile": ${Math.min(95, Math.round(percentage * 0.9))},
+  "strengthAreas": ["Skill1", "Skill2", "Skill3"],
+  "weaknessAreas": ["Gap1", "Gap2", "Gap3"],
+  "primaryCareer": {
+    "role": "Job Title",
+    "matchPercentage": ${Math.min(95, percentage + 15)},
+    "whyGoodFit": "Brief reason",
+    "averageSalary": "₹X-Y LPA",
+    "topCompanies": ["Company1", "Company2", "Company3"]
+  },
+  "secondaryCareer": {
+    "role": "Alternative",
+    "matchPercentage": ${Math.max(60, percentage - 5)},
+    "whyGoodFit": "Brief",
+    "averageSalary": "₹X-Y LPA"
+  },
+  "learningRoadmap": {
+    "immediate": {
+      "title": "Week 1-2",
+      "tasks": ["Task1", "Task2"],
+      "estimatedHours": 20
+    },
+    "shortTerm": {
+      "title": "Month 1-2",
+      "tasks": ["Task1", "Task2"],
+      "estimatedHours": 60
+    },
+    "longTerm": {
+      "title": "Month 3-6",
+      "tasks": ["Task1", "Task2"],
+      "estimatedHours": 100
+    }
+  },
+  "recommendations": ["Action1", "Action2", "Action3"]
+}`;
+}
+
+// ============================================
+// DEFAULT ANALYSIS FALLBACK
+// ============================================
+function getDefaultAnalysis(percentage, skillPerf, profile) {
+  const topSkills = Object.entries(skillPerf)
+    .map(([skill, perf]) => ({ skill, accuracy: (perf.correct / perf.total) * 100 }))
+    .sort((a, b) => b.accuracy - a.accuracy)
+    .slice(0, 3)
+    .map(s => s.skill);
+
+  const weakSkills = Object.entries(skillPerf)
+    .map(([skill, perf]) => ({ skill, accuracy: (perf.correct / perf.total) * 100 }))
+    .sort((a, b) => a.accuracy - b.accuracy)
+    .slice(0, 3)
+    .map(s => s.skill);
+
+  return {
+    careerReadiness: percentage,
+    percentile: Math.min(95, Math.round(percentage * 0.9)),
+    strengthAreas: topSkills.length > 0 ? topSkills : ['Problem Solving', 'Technical Knowledge', 'Quick Learning'],
+    weaknessAreas: weakSkills.length > 0 ? weakSkills : ['Advanced Concepts', 'Time Management', 'Practical Application'],
+    primaryCareer: {
+      role: profile.careerInterestArea || 'Software Developer',
+      matchPercentage: Math.min(95, percentage + 15),
+      whyGoodFit: 'Based on your educational background and quiz performance, this role aligns with your strengths.',
+      averageSalary: '₹4-8 LPA',
+      topCompanies: ['TCS', 'Infosys', 'Wipro']
+    },
+    secondaryCareer: {
+      role: 'Full-Stack Developer',
+      matchPercentage: Math.max(60, percentage - 5),
+      whyGoodFit: 'Alternative path that leverages your technical foundation.',
+      averageSalary: '₹5-10 LPA'
+    },
+    learningRoadmap: {
+      immediate: {
+        title: "Week 1-2: Foundation",
+        tasks: ["Review core concepts", "Practice daily coding", "Complete beginner tutorials"],
+        estimatedHours: 20
+      },
+      shortTerm: {
+        title: "Month 1-2: Skills",
+        tasks: ["Complete online course", "Build 2-3 projects", "Join coding communities"],
+        estimatedHours: 60
+      },
+      longTerm: {
+        title: "Month 3-6: Advanced",
+        tasks: ["Build portfolio project", "Contribute to open source", "Interview preparation"],
+        estimatedHours: 100
+      }
+    },
+    recommendations: [
+      "Build practical projects",
+      "Practice DSA problems daily",
+      "Network on LinkedIn",
+      "Contribute to open source"
+    ]
+  };
+}
+
+// ============================================
+// ASYNC EMAIL SENDER
+// ============================================
+async function sendQuizEmail(email, profile, result, quizNum, percentage, correct, total, timeTaken) {
+  const mailOptions = {
+    from: process.env.EMAIL,
+    to: email,
+    subject: `🎉 Quiz #${quizNum} Results - ${percentage}%`,
+    html: generateComprehensiveEmailHTML(profile, percentage, correct, total, quizNum, result.comprehensiveAnalysis, timeTaken)
+  };
+
+  return transporter.sendMail(mailOptions);
+}
 
 // ✅ COMPLETE EMAIL HTML GENERATOR - Replace your existing function
 function generateComprehensiveEmailHTML(userProfile, percentage, correct, total, quizNum, analysis, timeTaken) {
